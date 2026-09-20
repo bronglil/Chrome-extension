@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Source of truth for the extension icon. PNGs (16/48/128, store 512) are
+       rendered from this via the browser. Original artwork. -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5b52ee"/><stop offset="1" stop-color="#9a62f7"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="256" y1="16" x2="256" y2="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".20"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="ds" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#1a1240" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="118" fill="url(#g)"/>
+  <rect x="24" y="24" width="464" height="464" rx="118" fill="url(#sheen)"/>
+  <g filter="url(#ds)">
+    <path d="M 150 204 L 150 180 Q 150 150 180 150 L 204 150 M 362 204 L 362 180 Q 362 150 332 150 L 308 150 M 150 308 L 150 332 Q 150 362 180 362 L 204 362 M 362 308 L 362 332 Q 362 362 332 362 L 308 362"
+          fill="none" stroke="#ffffff" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="256" cy="256" r="46" fill="#ffffff"/>
+    <circle cx="256" cy="256" r="18" fill="url(#g)"/>
+    <circle cx="242" cy="242" r="7" fill="#ffffff"/>
+  </g>
+</svg>
