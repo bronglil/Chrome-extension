@@ -8,8 +8,8 @@
 //   * an offscreen document          -> getUserMedia frame grabs + MediaRecorder
 //   * a content script               -> in-page overlay + scroll-and-stitch
 //
-// Captured images are stashed in chrome.storage.local under a short id and the
-// editor tab reads them back by id (avoids giant URLs / message payload limits).
+// Captured images stay in memory for a one-shot handoff to the editor.
+// They are never written to chrome.storage.local (that quota is ~10 MB).
 // ============================================================================
 
 const OFFSCREEN_PATH = "src/offscreen/offscreen.html";
@@ -63,73 +63,39 @@ function pageMeta(tab, extra = {}) {
   };
 }
 
-const CAPTURE_DB = "snapshot-captures";
-const CAPTURE_STORE = "shots";
+const pendingCaptures = new Map();
 
-function openCaptureDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(CAPTURE_DB, 1);
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(CAPTURE_STORE)) {
-        req.result.createObjectStore(CAPTURE_STORE);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function putCapture(id, value) {
-  const db = await openCaptureDb();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(CAPTURE_STORE, "readwrite");
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-    tx.objectStore(CAPTURE_STORE).put(value, id);
-  });
-}
-
-async function pruneOldCaptures(keepId) {
+async function clearDiskCaptures() {
   try {
-    const db = await openCaptureDb();
-    const keys = await new Promise((resolve, reject) => {
-      const tx = db.transaction(CAPTURE_STORE, "readonly");
-      const req = tx.objectStore(CAPTURE_STORE).getAllKeys();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error);
-    });
-    const drop = keys.filter((k) => k !== keepId).slice(0, Math.max(0, keys.length - 3));
-    if (!drop.length) return;
+    const all = await chrome.storage.local.get(null);
+    const keys = Object.keys(all).filter((k) => k.startsWith("capture:") || k.startsWith("ocr:"));
+    if (keys.length) await chrome.storage.local.remove(keys);
+  } catch (_) { /* ignore */ }
+  try {
     await new Promise((resolve, reject) => {
-      const tx = db.transaction(CAPTURE_STORE, "readwrite");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-      drop.forEach((k) => tx.objectStore(CAPTURE_STORE).delete(k));
+      const req = indexedDB.deleteDatabase("snapshot-captures");
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => resolve();
     });
-  } catch (_) { /* first run */ }
-}
-
-async function clearLocalCaptureKeys() {
-  const all = await chrome.storage.local.get(null);
-  const keys = Object.keys(all).filter((k) => k.startsWith("capture:") || k.startsWith("ocr:"));
-  if (keys.length) await chrome.storage.local.remove(keys);
+  } catch (_) { /* nothing to wipe */ }
 }
 
 async function stashAndOpenEditor(dataUrl, meta = {}) {
   const id = shortId();
-  const payload = { dataUrl, meta, createdAt: Date.now() };
-  await clearLocalCaptureKeys().catch(() => {});
-  await pruneOldCaptures(id).catch(() => {});
-  try {
-    await putCapture(id, payload);
-  } catch (err) {
-    await pruneOldCaptures(id).catch(() => {});
-    await putCapture(id, payload);
-  }
+  pendingCaptures.set(id, { dataUrl, meta, createdAt: Date.now() });
+  setTimeout(() => pendingCaptures.delete(id), 120000);
+  await clearDiskCaptures().catch(() => {});
   await chrome.tabs.create({
     url: chrome.runtime.getURL("src/editor/editor.html") + "?id=" + id,
   });
   return id;
+}
+
+function takeCapture(id) {
+  const payload = pendingCaptures.get(id) || null;
+  if (payload) pendingCaptures.delete(id);
+  return payload;
 }
 
 async function openEmptyEditor() {
@@ -560,6 +526,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await markRecordingStarted(msg.startedAt);
           sendResponse({ ok: true });
           break;
+        case "TAKE_CAPTURE":
+          sendResponse(takeCapture(msg.id) || {});
+          break;
         case "DESKTOP_FRAME": {
           if (!msg.dataUrl) throw new Error("No screenshot received.");
           await stashAndOpenEditor(msg.dataUrl, { kind: msg.kind || "desktop-screen" });
@@ -640,13 +609,17 @@ chrome.runtime.onStartup.addListener(async () => {
     // Worker restarted mid-recording; offscreen is gone, so reset.
     await chrome.storage.local.set({ recordingState: { active: false, startedAt: 0 } });
   }
+  await clearDiskCaptures().catch(() => {});
   syncPageQr();
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ recordingState: { active: false, startedAt: 0 } });
+  clearDiskCaptures().catch(() => {});
   syncPageQr();
 });
+
+clearDiskCaptures().catch(() => {});
 
 chrome.windows.onRemoved.addListener((id) => {
   if (recording.windowId && recording.windowId === id) {
