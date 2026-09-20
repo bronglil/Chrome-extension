@@ -158,6 +158,13 @@ branch ruleset** (or classic branch protection) for `master`, enable *Require
 status checks to pass before merging* and select **Unit tests** and
 **End-to-end (Chromium)**. Every PR then blocks merge until both pass.
 
+## Landing page (GitHub Pages)
+
+A marketing/docs site lives in `docs/`. Publish it once: **Settings → Pages →
+Source: Deploy from a branch → Branch `master`, folder `/docs` → Save**. It goes
+live at `https://bronglil.github.io/Chrome-extension/` and updates on every push
+to `master` that touches `docs/`.
+
 ---
 
 ## Tech stack
