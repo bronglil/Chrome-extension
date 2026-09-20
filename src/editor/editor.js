@@ -70,7 +70,9 @@ async function boot() {
   const id = params.get("id");
   if (id) {
     const key = "capture:" + id;
-    const stored = (await chrome.storage.local.get(key))[key];
+    let stored = null;
+    try { stored = U.getCapture ? await U.getCapture(id) : null; } catch (_) { /* idb missing */ }
+    if (!stored) stored = (await chrome.storage.local.get(key))[key];
     if (stored) {
       state.meta = stored.meta || {};
       state.createdAt = stored.createdAt || Date.now();
@@ -80,7 +82,7 @@ async function boot() {
         : img;
       await initStage(final);
       renderSource();
-      // Free the storage entry once loaded.
+      if (U.deleteCapture) U.deleteCapture(id).catch(() => {});
       chrome.storage.local.remove(key);
       return;
     }

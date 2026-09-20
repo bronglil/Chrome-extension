@@ -234,7 +234,7 @@ async function ocrCrop(dataUrl, rect) {
   const crop = document.createElement("canvas");
   crop.width = w;
   crop.height = h;
-  crop.getContext("2d").drawImage(img, x, y, w, h, 0, 0, w, h);
+  crop.getContext("2d", { willReadFrequently: true }).drawImage(img, x, y, w, h, 0, 0, w, h);
   const worker = await getOcrWorker();
   const { data } = await worker.recognize(preprocessForOcr(crop));
   const text = (data.text || "").trim();

@@ -102,7 +102,72 @@
     };
   }
 
+  const CAPTURE_DB = "snapshot-captures";
+  const CAPTURE_STORE = "shots";
+
+  function openCaptureDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(CAPTURE_DB, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(CAPTURE_STORE)) {
+          req.result.createObjectStore(CAPTURE_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function putCapture(id, value) {
+    const db = await openCaptureDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(CAPTURE_STORE, "readwrite");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.objectStore(CAPTURE_STORE).put(value, id);
+    });
+  }
+
+  async function getCapture(id) {
+    const db = await openCaptureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(CAPTURE_STORE, "readonly");
+      const req = tx.objectStore(CAPTURE_STORE).get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function deleteCapture(id) {
+    const db = await openCaptureDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(CAPTURE_STORE, "readwrite");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.objectStore(CAPTURE_STORE).delete(id);
+    });
+  }
+
+  async function pruneCaptures(keepId) {
+    const db = await openCaptureDb();
+    const keys = await new Promise((resolve, reject) => {
+      const tx = db.transaction(CAPTURE_STORE, "readonly");
+      const req = tx.objectStore(CAPTURE_STORE).getAllKeys();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    const drop = keys.filter((k) => k !== keepId).slice(0, Math.max(0, keys.length - 3));
+    if (!drop.length) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(CAPTURE_STORE, "readwrite");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      drop.forEach((k) => tx.objectStore(CAPTURE_STORE).delete(k));
+    });
+  }
+
   root.SnapShotUtils = {
     sleep, throttle, rafDebounce, loadImage, blobToDataUrl, clampRect, deviceProfile,
+    putCapture, getCapture, deleteCapture, pruneCaptures,
   };
 })(typeof self !== "undefined" ? self : window);

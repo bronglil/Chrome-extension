@@ -63,11 +63,69 @@ function pageMeta(tab, extra = {}) {
   };
 }
 
+const CAPTURE_DB = "snapshot-captures";
+const CAPTURE_STORE = "shots";
+
+function openCaptureDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(CAPTURE_DB, 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(CAPTURE_STORE)) {
+        req.result.createObjectStore(CAPTURE_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function putCapture(id, value) {
+  const db = await openCaptureDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(CAPTURE_STORE, "readwrite");
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+    tx.objectStore(CAPTURE_STORE).put(value, id);
+  });
+}
+
+async function pruneOldCaptures(keepId) {
+  try {
+    const db = await openCaptureDb();
+    const keys = await new Promise((resolve, reject) => {
+      const tx = db.transaction(CAPTURE_STORE, "readonly");
+      const req = tx.objectStore(CAPTURE_STORE).getAllKeys();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    const drop = keys.filter((k) => k !== keepId).slice(0, Math.max(0, keys.length - 3));
+    if (!drop.length) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(CAPTURE_STORE, "readwrite");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      drop.forEach((k) => tx.objectStore(CAPTURE_STORE).delete(k));
+    });
+  } catch (_) { /* first run */ }
+}
+
+async function clearLocalCaptureKeys() {
+  const all = await chrome.storage.local.get(null);
+  const keys = Object.keys(all).filter((k) => k.startsWith("capture:") || k.startsWith("ocr:"));
+  if (keys.length) await chrome.storage.local.remove(keys);
+}
+
 async function stashAndOpenEditor(dataUrl, meta = {}) {
   const id = shortId();
-  await chrome.storage.local.set({
-    ["capture:" + id]: { dataUrl, meta, createdAt: Date.now() },
-  });
+  const payload = { dataUrl, meta, createdAt: Date.now() };
+  await clearLocalCaptureKeys().catch(() => {});
+  await pruneOldCaptures(id).catch(() => {});
+  try {
+    await putCapture(id, payload);
+  } catch (err) {
+    await pruneOldCaptures(id).catch(() => {});
+    await putCapture(id, payload);
+  }
   await chrome.tabs.create({
     url: chrome.runtime.getURL("src/editor/editor.html") + "?id=" + id,
   });
@@ -132,13 +190,16 @@ async function getCaptureTab() {
 
 let jobBusy = false;
 let queuedJob = null;
+let lastJobAt = 0;
 async function consumePendingJob(job) {
   if (!job) return;
+  if (job.at && job.at === lastJobAt) return;
   if (jobBusy) {
     queuedJob = job;
     return;
   }
   jobBusy = true;
+  lastJobAt = job.at || Date.now();
   try {
     await ensureOffscreen().catch(() => {});
     await chrome.storage.session.remove("pendingJob");
@@ -206,6 +267,9 @@ function friendlyError(err) {
   }
   if (/cancell|NotAllowed|denied|abort/i.test(msg)) {
     return "Share was closed before anything was picked. Try again and click Share in Chrome’s dialog.";
+  }
+  if (/quota/i.test(msg)) {
+    return "Storage was full from old screenshots. They were cleared — try the capture again.";
   }
   return msg;
 }
@@ -379,42 +443,47 @@ async function captureDesktop(kind) {
 // Recording
 // ---------------------------------------------------------------------------
 async function findRecorderTab() {
+  const prefix = chrome.runtime.getURL("src/recorder/recorder.html");
+  const isRecorder = (t) => (t.url || "").startsWith(prefix);
   if (recording.windowId) {
     try {
       const tabs = await chrome.tabs.query({ windowId: recording.windowId });
-      if (tabs[0]) return tabs[0];
+      const hit = tabs.find(isRecorder);
+      if (hit) return hit;
     } catch (_) { /* window already gone */ }
   }
-  const prefix = chrome.runtime.getURL("src/recorder/recorder.html");
   const tabs = await chrome.tabs.query({});
-  return tabs.find((t) => (t.url || "").startsWith(prefix)) || null;
+  return tabs.find(isRecorder) || null;
+}
+
+async function focusRecorder(tab) {
+  recording = {
+    active: true,
+    pending: !recording.startedAt,
+    startedAt: recording.startedAt || 0,
+    windowId: tab.windowId,
+  };
+  await chrome.storage.local.set({ recordingState: recording });
+  await chrome.windows.update(tab.windowId, { focused: true });
+  return { recording: true, pending: !!recording.pending, startedAt: recording.startedAt };
 }
 
 async function toggleRecording(options = {}) {
-  if (recording.active) {
+  const existing = await findRecorderTab();
+  const live = !!(recording.active && recording.startedAt && !recording.pending);
+
+  if (live) {
     chrome.runtime.sendMessage({ type: "RECORDER_STOP" }).catch(() => {});
-    // The recorder page saves the file and reports RECORDING_DONE.
     return { recording: true, stopping: true, startedAt: recording.startedAt };
   }
+
+  if (existing) return focusRecorder(existing);
 
   const qs = new URLSearchParams({
     cam: options.camera ? "1" : "0",
     mic: options.mic ? "1" : "0",
     audio: options.systemAudio ? "1" : "0",
   });
-  const existing = await findRecorderTab();
-  if (existing) {
-    recording = {
-      active: true,
-      pending: !recording.startedAt,
-      startedAt: recording.startedAt || 0,
-      windowId: existing.windowId,
-    };
-    await chrome.storage.local.set({ recordingState: recording });
-    await chrome.windows.update(existing.windowId, { focused: true });
-    return { recording: true, pending: !!recording.pending, startedAt: recording.startedAt };
-  }
-
   const win = await chrome.windows.create({
     url: chrome.runtime.getURL("src/recorder/recorder.html") + "?" + qs.toString(),
     type: "popup",
