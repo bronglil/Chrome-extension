@@ -124,6 +124,9 @@ button { font-family: inherit; }
 .qr__btn:hover { background: var(--surface-2); border-color: var(--line-strong); }
 .qr__btn svg { color: var(--ink-soft); }
 .qr__note { margin: 8px 2px 0; font-size: 12px; color: var(--ink-faint); }
+.qr__toggle { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px;
+  color: var(--ink-soft); cursor: pointer; }
+.qr__toggle input { accent-color: var(--accent); }
 
 /* Footer */
 .ftr { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;

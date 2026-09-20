@@ -154,6 +154,20 @@ $("#qr-share").addEventListener("click", async () => {
 
 initPageQR();
 
+// On-page QR overlay toggle (opt-in, persisted in the service worker).
+(async () => {
+  const box = $("#page-qr-toggle");
+  if (!box) return;
+  try {
+    const state = await send({ type: "GET_PAGE_QR" });
+    box.checked = !!state?.on;
+  } catch (_) {}
+  box.addEventListener("change", () => {
+    send({ type: "SET_PAGE_QR", on: box.checked }).catch(() => {});
+    toast(box.checked ? "QR shown on pages" : "QR hidden on pages");
+  });
+})();
+
 // Live recording timer while popup is open.
 let timerInt = null;
 async function tickTimer() {

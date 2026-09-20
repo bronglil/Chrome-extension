@@ -89,6 +89,54 @@ function isRestricted(url = "") {
   );
 }
 
+// ---------------------------------------------------------------------------
+// On-page QR overlay (opt-in). Registered as a dynamic content script only
+// while enabled, so there is zero footprint on pages when it's off.
+// ---------------------------------------------------------------------------
+const PAGE_QR_SCRIPT = {
+  id: "pageqr",
+  matches: ["<all_urls>"],
+  js: ["vendor/qrcode-generator.min.js", "src/content/qr-overlay.js"],
+  runAt: "document_idle",
+};
+
+async function pageQrRegistered() {
+  try {
+    const r = await chrome.scripting.getRegisteredContentScripts({ ids: ["pageqr"] });
+    return r.length > 0;
+  } catch (_) { return false; }
+}
+
+async function setPageQr(on) {
+  await chrome.storage.local.set({ pageQrEnabled: on });
+  try {
+    const registered = await pageQrRegistered();
+    if (on && !registered) await chrome.scripting.registerContentScripts([PAGE_QR_SCRIPT]);
+    if (!on && registered) await chrome.scripting.unregisterContentScripts({ ids: ["pageqr"] });
+  } catch (e) { console.warn("[SnapShot] pageqr register", e); }
+
+  // Reflect immediately on the current tab.
+  const tab = await getActiveTab();
+  if (tab && !isRestricted(tab.url)) {
+    if (on) {
+      chrome.scripting.executeScript({ target: { tabId: tab.id }, files: PAGE_QR_SCRIPT.js }).catch(() => {});
+    } else {
+      chrome.tabs.sendMessage(tab.id, { type: "PAGE_QR_HIDE" }).catch(() => {});
+    }
+  }
+  return { on };
+}
+
+// Keep the dynamic registration in sync with the stored preference.
+async function syncPageQr() {
+  const { pageQrEnabled } = await chrome.storage.local.get("pageQrEnabled");
+  const registered = await pageQrRegistered();
+  try {
+    if (pageQrEnabled && !registered) await chrome.scripting.registerContentScripts([PAGE_QR_SCRIPT]);
+    if (!pageQrEnabled && registered) await chrome.scripting.unregisterContentScripts({ ids: ["pageqr"] });
+  } catch (e) { console.warn("[SnapShot] pageqr sync", e); }
+}
+
 // captureVisibleTab is rate-limited to ~2/sec; callers that loop must throttle.
 async function captureVisible(windowId) {
   return chrome.tabs.captureVisibleTab(windowId, {
@@ -261,6 +309,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await openEmptyEditor();
           sendResponse({ ok: true });
           break;
+        case "GET_PAGE_QR": {
+          const { pageQrEnabled } = await chrome.storage.local.get("pageQrEnabled");
+          sendResponse({ on: !!pageQrEnabled });
+          break;
+        }
+        case "SET_PAGE_QR":
+          sendResponse(await setPageQr(!!msg.on));
+          break;
         case "CAPTURE_SLICE": {
           // Requested by the content script during full-page stitching.
           const tab = sender.tab || (await getActiveTab());
@@ -319,8 +375,10 @@ chrome.runtime.onStartup.addListener(async () => {
     // Worker restarted mid-recording; offscreen is gone, so reset.
     await chrome.storage.local.set({ recordingState: { active: false, startedAt: 0 } });
   }
+  syncPageQr();
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ recordingState: { active: false, startedAt: 0 } });
+  syncPageQr();
 });
