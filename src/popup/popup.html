@@ -87,6 +87,31 @@
         <svg class="wide__go" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
       </button>
     </section>
+    <!-- Page QR -->
+    <section class="grp">
+      <h2 class="grp__title">Share this page</h2>
+      <div class="qr" id="qr-section">
+        <div class="qr__code"><img id="qr-img" alt="QR code for the current page" width="96" height="96" /></div>
+        <div class="qr__body">
+          <div class="qr__url" id="qr-url" title="">—</div>
+          <div class="qr__acts">
+            <button class="qr__btn" id="qr-copy-link" title="Copy page link">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg><span>Link</span>
+            </button>
+            <button class="qr__btn" id="qr-copy-img" title="Copy QR image">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>QR</span>
+            </button>
+            <button class="qr__btn" id="qr-save" title="Save QR as PNG">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg><span>Save</span>
+            </button>
+            <button class="qr__btn" id="qr-share" title="Share the page link">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg><span>Share</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <p class="qr__note" id="qr-note" hidden>This page can't be shared as a link.</p>
+    </section>
   </div>
 
   <footer class="ftr">
@@ -95,6 +120,7 @@
   </footer>
 
   <div class="toast" id="toast" hidden></div>
+  <script src="../../vendor/qrcode-generator.min.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

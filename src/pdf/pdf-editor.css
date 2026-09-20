@@ -155,6 +155,7 @@ button { font-family: inherit; }
   position: absolute; inset: 0; margin: auto; width: max-content; height: max-content;
   text-align: center; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 6px;
 }
+.empty[hidden] { display: none; }  /* class display would otherwise beat [hidden] */
 .empty__icon {
   width: 72px; height: 72px; display: grid; place-items: center; margin-bottom: 6px;
   border-radius: 20px; background: rgba(255,255,255,.12); color: #fff;
@@ -175,6 +176,27 @@ button { font-family: inherit; }
   margin: 0 0 10px; font-size: 11px; font-weight: 600; text-transform: uppercase;
   letter-spacing: .06em; color: var(--ink-faint);
 }
+/* Acknowledge toggle */
+.ack-btn {
+  width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface);
+  color: var(--ink); cursor: pointer; text-align: left; font: inherit; transition: .15s;
+}
+.ack-btn:hover { background: var(--surface-2); }
+.ack-btn__mark {
+  flex: none; width: 36px; height: 26px; display: grid; place-items: center; border-radius: 6px;
+  background: var(--surface-2); color: var(--ink-faint); border: 1px solid var(--line);
+  font-family: "Segoe Script", "Snell Roundhand", "Brush Script MT", cursive;
+  font-style: italic; font-weight: 700; font-size: 16px;
+}
+.ack-btn__label { flex: 1; font-size: 12.5px; color: var(--ink-soft); }
+.ack-btn__label b { color: var(--ink); }
+.ack-btn__check { flex: none; color: var(--accent); opacity: 0; transform: scale(.6); transition: .15s; }
+.ack-btn.is-active { border-color: var(--accent); background: var(--accent-weak); }
+.ack-btn.is-active .ack-btn__mark { background: var(--accent); color: #fff; border-color: transparent; }
+.ack-btn.is-active .ack-btn__label { color: var(--ink); }
+.ack-btn.is-active .ack-btn__check { opacity: 1; transform: scale(1); }
+
 .panel--tip {
   display: flex; gap: 8px; align-items: flex-start; color: var(--ink-soft);
   font-size: 12px; background: var(--surface-2); border: 1px solid var(--line);

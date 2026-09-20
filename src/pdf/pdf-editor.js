@@ -34,7 +34,41 @@ const state = {
   // Per-page overlay JSON + the pixel viewport used when rendered.
   pageOverlays: {},    // { [pageNum]: konvaJSON }
   pageSizes: {},       // { [pageNum]: {w,h} } in rendered pixels
+  acknowledge: false,  // stamp "AK" at the bottom of every page
+  ackLayer: null,      // on-screen AK badge (redrawn per page; not serialized)
+  pageCanvas: null,    // the rendered pixels of the current page (for occupancy checks)
 };
+
+// Is a corner region of a rendered page canvas already occupied by content?
+// Samples the bottom band and returns the ink ratio (0..1) of non-white pixels.
+function regionInkRatio(canvas, side) {
+  try {
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const bandH = Math.max(24, Math.round(canvas.height * 0.09));
+    const boxW = Math.round(canvas.width * 0.34);
+    const x = side === "right" ? canvas.width - boxW : 0;
+    const y = canvas.height - bandH;
+    const { data } = ctx.getImageData(x, y, boxW, bandH);
+    let ink = 0, total = 0;
+    for (let i = 0; i < data.length; i += 16) { // sample every 4th pixel
+      total++;
+      const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+      if (a > 20 && (r < 235 || g < 235 || b < 235)) ink++;
+    }
+    return total ? ink / total : 0;
+  } catch (_) { return 0; }
+}
+
+// Pick the side for the AK so it does not overwrite existing content:
+// prefer right; if right is busy use left; if both busy, the emptier one.
+function chooseAckSide(canvas) {
+  const OCCUPIED = 0.015; // >1.5% of sampled pixels have ink ⇒ occupied
+  const right = regionInkRatio(canvas, "right");
+  const left = regionInkRatio(canvas, "left");
+  if (right < OCCUPIED) return "right";
+  if (left < OCCUPIED) return "left";
+  return right <= left ? "right" : "left";
+}
 
 // ---- UI helpers ------------------------------------------------------------
 function toast(msg, ms = 2200) {
@@ -119,16 +153,63 @@ async function renderPage(num) {
   state.stage.add(state.baseLayer, state.overlayLayer);
   state.baseLayer.add(new Konva.Image({ image: canvas, width: canvas.width, height: canvas.height }));
   state.baseLayer.draw();
+  state.pageCanvas = canvas; // keep the pixels for AK occupancy detection
 
   state.transformer = new Konva.Transformer({ rotateEnabled: true, ignoreStroke: true });
   state.overlayLayer.add(state.transformer);
 
+  // A separate top layer for the AK acknowledgement badge (never serialized).
+  state.ackLayer = new Konva.Layer({ listening: false });
+  state.stage.add(state.ackLayer);
+
   // Restore any overlays previously placed on this page.
   loadOverlay(num);
   bindStage();
+  drawAck();
   state.baseLayer.draw();
   state.overlayLayer.draw();
 }
+
+// Draw (or clear) the on-screen "AK" badge at the bottom-centre of the page.
+function drawAck() {
+  if (!state.ackLayer) return;
+  state.ackLayer.destroyChildren();
+  if (state.acknowledge && state.stage) {
+    const W = state.stage.width();
+    const H = state.stage.height();
+    // Signature-style: cursive + italic "AK" with an underline, bottom-centre.
+    const text = new Konva.Text({
+      text: "AK", fontSize: 30, fontStyle: "italic bold",
+      fontFamily: '"Segoe Script","Snell Roundhand","Brush Script MT",cursive',
+      fill: "#4f46e5",
+    });
+    const tw = text.width();
+    // Place bottom-right, unless that corner already has content — then bottom-left.
+    const side = state.pageCanvas ? chooseAckSide(state.pageCanvas) : "right";
+    const x = side === "right" ? W - tw - 40 : 40;
+    const y = H - 52;
+    text.position({ x, y });
+    const underline = new Konva.Line({
+      points: [x - 4, y + 34, x + tw + 4, y + 34], stroke: "#4f46e5", strokeWidth: 1.5, lineCap: "round",
+    });
+    state.ackLayer.add(underline, text);
+  }
+  state.ackLayer.draw();
+}
+
+// Toggle the acknowledgement.
+document.addEventListener("DOMContentLoaded", () => {}); // noop guard for order
+function wireAck() {
+  const btn = $("#pe-ack");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    state.acknowledge = !state.acknowledge;
+    btn.classList.toggle("is-active", state.acknowledge);
+    drawAck();
+    toast(state.acknowledge ? "AK will be stamped on every page" : "Acknowledgement removed");
+  });
+}
+wireAck();
 
 function saveOverlay(num) {
   if (!state.overlayLayer) return;
@@ -455,6 +536,32 @@ async function exportPdf() {
       page.drawImage(png, { x: 0, y: 0, width, height });
     }
 
+    // Stamp the "AK" acknowledgement — italic, signature-style — on every page.
+    if (state.acknowledge) {
+      const font = await pdf.embedFont(PDFLib.StandardFonts.HelveticaBoldOblique);
+      const size = 22;
+      const ink = PDFLib.rgb(0.31, 0.27, 0.9);
+      const tw = font.widthOfTextAtSize("AK", size);
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+        const { width } = page.getSize();
+        // Render the page to detect which bottom corner is free (don't overwrite).
+        let side = "right";
+        try {
+          const pg = await state.pdfDoc.getPage(i + 1);
+          const vp = pg.getViewport({ scale: 1 });
+          const c = document.createElement("canvas");
+          c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+          await pg.render({ canvasContext: c.getContext("2d", { willReadFrequently: true }), viewport: vp }).promise;
+          side = chooseAckSide(c);
+        } catch (_) { /* default right */ }
+        const x = side === "right" ? width - tw - 40 : 40;
+        const y = 24;
+        page.drawText("AK", { x, y, size, font, color: ink });
+        page.drawLine({ start: { x: x - 3, y: y - 4 }, end: { x: x + tw + 3, y: y - 4 }, thickness: 1.2, color: ink });
+      }
+    }
+
     progress("Saving…", 0.95);
     const bytes = await pdf.save();
     const blob = new Blob([bytes], { type: "application/pdf" });
@@ -511,4 +618,4 @@ async function overlayPng(num) {
 }
 
 // Expose a couple of internals for E2E tests.
-window.__pdfEditor = { state, openPdf, exportPdf };
+window.__pdfEditor = { state, openPdf, exportPdf, chooseAckSide };

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SnapShot Studio — Screenshot, Recorder & PDF Signer for Chrome</title>
+<meta name="description" content="A Manifest V3 Chrome extension for screenshots, full-page capture, screen recording, OCR, QR, annotation and PDF signing — fast, private and fully offline." />
+<link rel="icon" href="icon128.png" />
+<style>
+  :root{
+    color-scheme: light dark;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --bg:#f6f7fb; --surface:#fff; --ink:#161b26; --soft:#5b6472; --faint:#98a1b0;
+    --line:#e6e9ef; --accent:#4f46e5; --accent2:#8b5cf6; --accent-weak:#eef0fe;
+    --shadow:0 10px 30px rgba(16,24,40,.10); --shadow-sm:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
+    --radius:16px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0c0f16; --surface:#141924; --ink:#e8ebf1; --soft:#a4adbb; --faint:#6b7482;
+      --line:#232a36; --accent:#8b83ff; --accent2:#a78bfa; --accent-weak:#1b1a33;
+      --shadow:0 12px 34px rgba(0,0,0,.5); --shadow-sm:0 1px 2px rgba(0,0,0,.4); }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:var(--font);background:var(--bg);color:var(--ink);line-height:1.55;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+
+  /* Nav */
+  nav{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav-in{display:flex;align-items:center;justify-content:space-between;height:60px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em}
+  .brand img{width:28px;height:28px;border-radius:8px}
+  .nav-links{display:flex;align-items:center;gap:22px;font-size:14px;font-weight:500}
+  .nav-links a{color:var(--soft)} .nav-links a:hover{color:var(--ink)}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:10px;font-weight:600;font-size:14px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;transition:.15s}
+  .btn:hover{background:var(--accent-weak)}
+  .btn--primary{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 1px 2px rgba(79,70,229,.35)}
+  .btn--primary:hover{background:#4338ca}
+
+  /* Hero */
+  .hero{text-align:center;padding:76px 0 40px}
+  .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;background:var(--accent-weak);color:var(--accent);font-size:13px;font-weight:600;margin-bottom:22px}
+  .hero h1{font-size:clamp(32px,6vw,54px);line-height:1.05;letter-spacing:-.03em;margin:0 0 18px}
+  .hero h1 .grad{background:linear-gradient(120deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p{font-size:clamp(16px,2.4vw,20px);color:var(--soft);max-width:640px;margin:0 auto 30px}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:26px}
+  .badge{font-size:12px;color:var(--faint);border:1px solid var(--line);border-radius:999px;padding:4px 12px;background:var(--surface)}
+
+  /* Mock window */
+  .mock{max-width:860px;margin:44px auto 0;border-radius:var(--radius);overflow:hidden;border:1px solid var(--line);box-shadow:var(--shadow);background:var(--surface)}
+  .mock__bar{display:flex;align-items:center;gap:8px;height:38px;padding:0 14px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 90%,var(--bg))}
+  .dot{width:11px;height:11px;border-radius:50%}
+  .dot.r{background:#ff5f57}.dot.y{background:#febc2e}.dot.g{background:#28c840}
+  .mock__body{display:flex;min-height:280px}
+  .mock__rail{width:56px;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;background:color-mix(in srgb,var(--surface) 94%,var(--bg))}
+  .mock__tool{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;color:var(--faint)}
+  .mock__tool.on{background:var(--accent);color:#fff}
+  .mock__canvas{flex:1;display:grid;place-items:center;background:repeating-conic-gradient(color-mix(in srgb,var(--bg) 88%,#8884) 0% 25%,transparent 0% 50%) 50%/22px 22px}
+  .mock__shot{width:66%;height:64%;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:var(--shadow);position:relative}
+  .mock__shot::after{content:"";position:absolute;inset:18% 22% 42% 18%;border:2px dashed rgba(255,255,255,.85);border-radius:6px}
+
+  /* Sections */
+  section{padding:56px 0}
+  .eyebrow{text-align:center;color:var(--accent);font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
+  h2{text-align:center;font-size:clamp(24px,4vw,34px);letter-spacing:-.02em;margin:0 0 40px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;transition:.15s}
+  .card:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));transform:translateY(-2px);box-shadow:var(--shadow-sm)}
+  .card .ico{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;background:var(--accent-weak);color:var(--accent);margin-bottom:14px}
+  .card h3{margin:0 0 6px;font-size:16px}
+  .card p{margin:0;color:var(--soft);font-size:14px}
+
+  /* Steps */
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;counter-reset:s}
+  .step{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;position:relative}
+  .step::before{counter-increment:s;content:counter(s);position:absolute;top:-14px;left:20px;width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700;font-size:14px}
+  .step h3{margin:8px 0 6px;font-size:15px}.step p{margin:0;color:var(--soft);font-size:14px}
+  code{background:color-mix(in srgb,var(--accent-weak) 70%,transparent);color:var(--accent);padding:2px 6px;border-radius:6px;font-size:.92em}
+
+  /* Stats */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;text-align:center}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:24px 18px;transition:.15s}
+  .stat:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));box-shadow:var(--shadow-sm)}
+  .stat b{display:block;font-size:34px;line-height:1;letter-spacing:-.02em;margin-bottom:10px;background:linear-gradient(120deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .stat span{color:var(--soft);font-size:13px;line-height:1.5}
+  .stat span br{content:"";display:block;margin-top:4px}
+
+  footer{border-top:1px solid var(--line);padding:32px 0;color:var(--faint);font-size:13px}
+  .foot-in{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+</style>
+</head>
+<body>
+<nav><div class="wrap nav-in">
+  <span class="brand"><img src="icon128.png" alt=""/> SnapShot Studio</span>
+  <span class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#tools">Tools</a>
+    <a href="#install">Install</a>
+    <a class="btn btn--primary" href="https://github.com/bronglil/Chrome-extension">GitHub</a>
+  </span>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <span class="pill">● Works in Chrome · 100% offline · no tracking</span>
+  <h1>Capture, annotate &amp; sign — <span class="grad">right in Chrome</span></h1>
+  <p>Screenshots, full-page capture, screen recording, offline OCR, QR, and a real PDF signer — one fast, private extension. No native app, no build step, no data leaves your browser.</p>
+  <div class="cta">
+    <a class="btn btn--primary" href="https://github.com/bronglil/Chrome-extension/releases/latest">Download latest release</a>
+    <a class="btn" href="#install">How to install</a>
+  </div>
+  <div class="badges">
+    <span class="badge">Chrome 116+</span>
+    <span class="badge">Free &amp; open source</span>
+    <span class="badge">Light / dark</span>
+    <span class="badge" id="ver-badge">v1.0.0</span>
+  </div>
+
+  <div class="mock" role="img" aria-label="Editor preview">
+    <div class="mock__bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></div>
+    <div class="mock__body">
+      <div class="mock__rail">
+        <div class="mock__tool on"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.5 18 2.6-7.9L21 10.5z"/></svg></div>
+        <div class="mock__tool"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></div>
+        <div class="mock__tool"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/></svg></div>
+        <div class="mock__tool"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2M12 5v14M9 19h6"/></svg></div>
+        <div class="mock__tool"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c3.5 4 6 7 6 10a6 6 0 0 1-12 0c0-3 2.5-6 6-10z"/></svg></div>
+      </div>
+      <div class="mock__canvas"><div class="mock__shot"></div></div>
+    </div>
+  </div>
+</div></header>
+
+<section id="features"><div class="wrap">
+  <p class="eyebrow">Everything in one place</p>
+  <h2>One extension, the whole workflow</h2>
+  <div class="grid">
+    <div class="card"><div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 4"/></svg></div><h3>Smart capture</h3><p>Visible area, drag-to-select, and full-page scroll-and-stitch — no share picker, handles sticky headers and lazy images.</p></div>
+    <div class="card"><div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div><h3>Screen recording</h3><p>Record screen or window to WebM with optional mic and tab/system audio. Start and stop from the toolbar.</p></div>
+    <div class="card"><div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.5 18 2.6-7.9L21 10.5z"/></svg></div><h3>Full annotation editor</h3><p>Arrows, shapes, freehand, highlighter, text, step counter, spotlight, blur/pixelate, plus gradient backgrounds and shadows.</p></div>
+    <div class="card"><div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2M9 19h6M12 5v14"/></svg></div><h3>Offline OCR</h3><p>Extract text with Tesseract.js — preprocessing (upscale, contrast, Otsu) makes small and low-contrast text readable.</p></div>
+    <div class="card"><div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/></svg></div><h3>PDF sign &amp; markup</h3><p>Open a PDF, drop your signature exactly where you want, pen and highlight while you read, and export with the original text intact.</p></div>
+    <div class="card"><div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 21v-3"/></svg></div><h3>Share via QR</h3><p>The popup shows a live QR of the current page — copy the link, copy or save the QR, or use the native share sheet.</p></div>
+  </div>
+</div></section>
+
+<section id="install" style="background:color-mix(in srgb,var(--surface) 55%,var(--bg))"><div class="wrap">
+  <p class="eyebrow">Two minutes</p>
+  <h2>Install (load unpacked)</h2>
+  <div class="steps">
+    <div class="step"><h3>Get the code</h3><p>Download the latest release ZIP, or <code>git clone</code> the repo.</p></div>
+    <div class="step"><h3>Open extensions</h3><p>Go to <code>chrome://extensions</code> and turn on <b>Developer mode</b>.</p></div>
+    <div class="step"><h3>Load unpacked</h3><p>Click <b>Load unpacked</b> and pick the folder with <code>manifest.json</code>.</p></div>
+    <div class="step"><h3>Pin &amp; go</h3><p>Pin SnapShot Studio to the toolbar and start capturing.</p></div>
+  </div>
+</div></section>
+
+<section id="tools"><div class="wrap">
+  <p class="eyebrow">What's inside</p>
+  <h2>Every tool, one click away</h2>
+  <div class="stats">
+    <div class="stat"><b>6</b><span>capture &amp; record modes<br/>visible · area · full&nbsp;page · screen · window · timed</span></div>
+    <div class="stat"><b>9</b><span>annotation tools<br/>arrow · shapes · freehand · highlighter · text · steps · spotlight · blur</span></div>
+    <div class="stat"><b>5</b><span>ways to export<br/>PNG · JPEG · PDF · clipboard · shareable link</span></div>
+    <div class="stat"><b>100%</b><span>offline<br/>nothing ever leaves your browser</span></div>
+  </div>
+  <p style="text-align:center;color:var(--soft);margin-top:26px">Plus offline <b>OCR</b> text extraction, <b>QR</b> decode &amp; page sharing, and a full <b>PDF signer</b> with pen and highlighter — all in the same extension.</p>
+</div></section>
+
+<footer><div class="wrap foot-in">
+  <span>SnapShot Studio — MIT-licensed dependencies, vendored for offline use.</span>
+  <span><a href="privacy.html">Privacy</a> · <a href="https://github.com/bronglil/Chrome-extension">Source</a> · <a href="https://github.com/bronglil/Chrome-extension/releases">Releases</a></span>
+</div></footer>
+
+<script>
+// Show the newest published release tag in the version badge (best-effort).
+fetch("https://api.github.com/repos/bronglil/Chrome-extension/releases/latest")
+  .then(r => r.ok ? r.json() : null)
+  .then(d => { if (d && d.tag_name) document.getElementById("ver-badge").textContent = d.tag_name; })
+  .catch(() => {});
+</script>
+</body>
+</html>

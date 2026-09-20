@@ -23,6 +23,7 @@ test.describe("Editor — annotation tools", () => {
     const page = await openEditor(context, extensionId, id);
     const imgs = await countByType(page, "Image");
     expect(imgs).toBeGreaterThanOrEqual(1); // base image present
+    await expect(page.locator("#empty-state")).toBeHidden(); // no "No image yet" over the capture
   });
 
   test("draws a rectangle annotation", async ({ context, extensionId }) => {

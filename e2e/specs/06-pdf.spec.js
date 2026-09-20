@@ -27,6 +27,7 @@ test.describe("PDF editor", () => {
     await loadSample(page);
     const n = await page.evaluate(() => window.__pdfEditor.state.numPages);
     expect(n).toBe(2);
+    await expect(page.locator("#pe-empty")).toBeHidden(); // empty prompt gone once a PDF loads
   });
 
   test("navigates between pages", async ({ context, extensionId }) => {
@@ -98,6 +99,44 @@ test.describe("PDF editor", () => {
     await expect.poll(() => overlayCount(page, ".sig")).toBe(0);
     await page.click("#pe-prev");
     await expect.poll(() => overlayCount(page, ".sig")).toBe(1);
+  });
+
+  test("Acknowledge stamps an AK mark and persists across pages", async ({ context, extensionId }) => {
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+    await page.click("#pe-ack");
+    await expect(page.locator("#pe-ack")).toHaveClass(/is-active/);
+    // On-screen AK badge is drawn on the dedicated ack layer.
+    await expect.poll(() => page.evaluate(
+      () => window.__pdfEditor.state.ackLayer.getChildren().length
+    )).toBeGreaterThan(0);
+    // It re-appears on the next page too.
+    await page.click("#pe-next");
+    await expect.poll(() => page.evaluate(
+      () => window.__pdfEditor.state.ackLayer.getChildren().length
+    )).toBeGreaterThan(0);
+  });
+
+  test("Acknowledge avoids overwriting: picks the free bottom corner", async ({ context, extensionId }) => {
+    const page = await openPdfEditor(context, extensionId);
+    const sides = await page.evaluate(() => {
+      const mk = (paint) => {
+        const c = document.createElement("canvas");
+        c.width = 600; c.height = 400;
+        const x = c.getContext("2d");
+        x.fillStyle = "#fff"; x.fillRect(0, 0, 600, 400);
+        paint(x);
+        return c;
+      };
+      const pick = window.__pdfEditor.chooseAckSide;
+      const blank = mk(() => {});
+      const rightBusy = mk((x) => { x.fillStyle = "#000"; x.fillRect(430, 360, 150, 30); });
+      const leftBusy = mk((x) => { x.fillStyle = "#000"; x.fillRect(10, 360, 150, 30); });
+      return { blank: pick(blank), rightBusy: pick(rightBusy), leftBusy: pick(leftBusy) };
+    });
+    expect(sides.blank).toBe("right");     // empty page ⇒ default right
+    expect(sides.rightBusy).toBe("left");  // footer on the right ⇒ move left
+    expect(sides.leftBusy).toBe("right");  // content on the left ⇒ stay right
   });
 
   test("exports a signed PDF larger than the original", async ({ context, extensionId }) => {
