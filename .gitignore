@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Playwright E2E artifacts
+e2e/report/
+e2e/test-results/
+test-results/
+playwright-report/
+.playwright/
+
+# OS / editor cruft
+.DS_Store
+*.log

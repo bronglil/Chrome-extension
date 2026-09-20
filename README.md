@@ -65,6 +65,8 @@ src/
   editor/         Konva canvas editor: crop, annotate, OCR, QR, export
 vendor/           konva, jspdf, jsqr, tesseract (core wasm + eng lang data)
 icons/
+test/             Unit tests for src/lib/utils.js (Node built-in runner)
+e2e/              Playwright end-to-end tests (real extension in Chromium)
 ```
 
 **Message flow:** popup / shortcut → service worker → (content script *or*
@@ -145,23 +147,45 @@ work to the machine:
 
 ## ✅ Tests
 
-The reusable core logic in `src/lib/utils.js` is covered by a unit-test suite
-that runs on **Node's built-in test runner** — no dependencies to install:
+Two layers, both fully automated:
 
 ```bash
-npm test        # or: node --test "test/**/*.test.js"
+npm test        # unit tests  (Node built-in runner, no browser)
+npm run test:e2e   # end-to-end (real extension in Chromium via Playwright)
+npm run test:all   # both
 ```
 
-20 tests cover `clampRect`, `throttle`, `rafDebounce`, `sleep`, `loadImage`,
-`blobToDataUrl` and the device-adaptive `deviceProfile()` (high-end vs 2-core vs
-Save-Data/2G, and missing-hint fallbacks). Browser globals (`Image`,
-`FileReader`, `requestAnimationFrame`, `navigator`) are stubbed in
-`test/env.js`, which loads the module in an isolated VM sandbox.
+### Unit tests — `test/` (20 tests)
+Cover the reusable core in `src/lib/utils.js`: `clampRect`, `throttle`,
+`rafDebounce`, `sleep`, `loadImage`, `blobToDataUrl` and the device-adaptive
+`deviceProfile()` (high-end vs 2-core vs Save-Data/2G, and missing-hint
+fallbacks). Browser globals are stubbed in `test/env.js` via an isolated VM
+sandbox. No dependencies to install.
 
-> The `chrome.*`, DOM and media code (service worker, offscreen recorder,
-> content overlay, Konva editor) requires a real browser and is validated by
-> loading the unpacked extension — it can't be exercised by a headless unit
-> runner.
+### End-to-end tests — `e2e/` (19 tests, Playwright)
+Load the **real unpacked extension** into Chromium and drive it:
+
+| Spec | Covers |
+|------|--------|
+| `00-smoke` | Extension loads, service worker registers |
+| `01-popup` | Every capture-mode button + recording controls render |
+| `02-editor-annotate` | Konva stage, rectangle/arrow/oval/step tools, undo, gradient+padding background |
+| `03-export` | PNG / JPEG / clipboard / multi-page PDF export |
+| `04-capture` | `captureVisibleTab`, **full-page scroll-and-stitch**, area-selection drag (real content script on a served page) |
+| `05-ocr-qr` | Offline **Tesseract OCR** extracts text; **QR decode** returns the value |
+
+E2E notes:
+- MV3 extensions only load in **headed** Chromium, so `test:e2e` runs under
+  **Xvfb** (`xvfb-run`). The fixture points at the pre-installed Chromium via
+  `CHROMIUM_PATH` (defaults to the container path; override with the env var).
+- Desktop-picker flows (`getDisplayMedia` / `desktopCapture`) can't be scripted
+  headlessly — the picker is a browser privacy control — so those paths are
+  driven through the pieces that don't need a picker (tab capture, editor,
+  OCR/QR), which exercise the same logic.
+
+> These E2E tests caught two real load-time bugs during development: a
+> `worker-src blob:` CSP directive that hung the entire extension load, and
+> missing Tesseract LSTM core files that broke OCR. Both are fixed.
 
 ## 🛠️ Tech stack
 

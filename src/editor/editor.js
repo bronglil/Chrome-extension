@@ -685,6 +685,10 @@ async function getOcrWorker() {
     corePath: chrome.runtime.getURL("vendor/tesseract/"),
     langPath: base + "lang",
     gzip: true,
+    // Load the worker directly from the extension URL rather than a blob URL —
+    // blob workers are blocked by the MV3 extension CSP (and needing
+    // `worker-src blob:` in the CSP hangs the extension load in Chrome).
+    workerBlobURL: false,
     logger: (m) => {
       if (m.status === "recognizing text") showProgress("OCR…", m.progress);
     },
