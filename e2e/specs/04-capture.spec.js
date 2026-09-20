@@ -43,7 +43,13 @@ test.describe("Capture pipeline (content script)", () => {
     await page.bringToFront();
     const head = await (await sw(context)).evaluate(async () => {
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      const url = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+      // captureVisibleTab can transiently fail with "image readback failed" on
+      // GPU-less CI compositors — retry a few times.
+      let url = "";
+      for (let i = 0; i < 6; i++) {
+        try { url = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }); break; }
+        catch (_) { await new Promise((r) => setTimeout(r, 300)); }
+      }
       return url.slice(0, 22);
     });
     expect(head).toContain("data:image/png");

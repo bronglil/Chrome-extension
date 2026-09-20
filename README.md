@@ -38,6 +38,8 @@ all PDF work use libraries vendored under `vendor/`.
 **Share this page**
 - The popup shows a live **QR code of the current tab's URL** — copy the link,
   copy or save the QR as PNG, or share via the native share sheet.
+- Optional **on-page QR overlay**: toggle it to show a small, dismissible QR in
+  the bottom corner of any site (off by default; injected only while enabled).
 
 **Editor** (Konva canvas, opens in a tab)
 - Crop, and annotate: arrow, rectangle, oval, freehand, highlighter, text, step
