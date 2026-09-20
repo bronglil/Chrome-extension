@@ -1,0 +1,9 @@
+{
+  "name": "snapshot-studio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SnapShot Studio — MV3 screenshot, recording & annotation Chrome extension.",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\""
+  }
+}

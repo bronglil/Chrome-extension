@@ -143,6 +143,26 @@ work to the machine:
 
 ---
 
+## ✅ Tests
+
+The reusable core logic in `src/lib/utils.js` is covered by a unit-test suite
+that runs on **Node's built-in test runner** — no dependencies to install:
+
+```bash
+npm test        # or: node --test "test/**/*.test.js"
+```
+
+20 tests cover `clampRect`, `throttle`, `rafDebounce`, `sleep`, `loadImage`,
+`blobToDataUrl` and the device-adaptive `deviceProfile()` (high-end vs 2-core vs
+Save-Data/2G, and missing-hint fallbacks). Browser globals (`Image`,
+`FileReader`, `requestAnimationFrame`, `navigator`) are stubbed in
+`test/env.js`, which loads the module in an isolated VM sandbox.
+
+> The `chrome.*`, DOM and media code (service worker, offscreen recorder,
+> content overlay, Konva editor) requires a real browser and is validated by
+> loading the unpacked extension — it can't be exercised by a headless unit
+> runner.
+
 ## 🛠️ Tech stack
 
 Manifest V3 · vanilla JS (no build step) · **Konva.js** (editor canvas) ·
