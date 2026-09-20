@@ -22,6 +22,10 @@ all PDF work use libraries vendored under `vendor/`.
 - Screen recording → WebM, with optional microphone and tab/system audio.
 - Start/stop from the popup or a keyboard shortcut; a red badge shows while live.
 
+**Share this page**
+- The popup shows a live **QR code of the current tab's URL** — copy the link,
+  copy or save the QR as PNG, or share via the native share sheet.
+
 **Editor** (Konva canvas, opens in a tab)
 - Crop, and annotate: arrow, rectangle, oval, freehand, highlighter, text, step
   counter, spotlight, and blur/pixelate (incl. OCR-guided text-only blur).
@@ -80,7 +84,7 @@ src/
   content/    In-page area overlay + full-page scroll & stitch
   editor/     Konva editor: crop, annotate, OCR, QR, export
   pdf/        PDF editor: open, sign, pen/highlight, save (pdf.js + pdf-lib)
-vendor/       konva, jspdf, jsqr, tesseract, pdfjs, pdf-lib (all offline)
+vendor/       konva, jspdf, jsqr, tesseract, pdfjs, pdf-lib, qrcode (all offline)
 test/         Unit tests (Node built-in runner)
 e2e/          Playwright end-to-end tests (real extension in Chromium)
 ```
@@ -105,7 +109,7 @@ captured.
 npm ci
 
 npm test          # unit tests (no browser)
-npm run test:e2e  # end-to-end (real extension in Chromium, headed under Xvfb)
+npm run test:e2e  # end-to-end (real extension in Chromium; auto-uses Xvfb on Linux)
 npm run test:all  # both
 ```
 
@@ -122,12 +126,14 @@ npm ci
 
 - **Unit — `test/` (20):** the reusable core in `src/lib/utils.js` — `clampRect`,
   `throttle`, `rafDebounce`, `loadImage`, `blobToDataUrl`, and `deviceProfile()`.
-- **E2E — `e2e/` (30, Playwright):** load the real unpacked extension and drive
+- **E2E — `e2e/` (34, Playwright):** load the real unpacked extension and drive
   it — popup, editor annotations/export, `captureVisibleTab`, full-page
-  scroll-and-stitch, area select, offline OCR & QR, and the PDF editor
-  (open, page nav, pen, highlighter, signature, signed-PDF export), and light/dark theming.
+  scroll-and-stitch, area select, offline OCR & QR, the PDF editor
+  (open, page nav, pen, highlighter, signature, signed-PDF export), the page-QR
+  share panel (encode + jsQR round-trip), and light/dark theming.
 
-> MV3 extensions load only in **headed** Chromium, so E2E runs under **Xvfb**.
+> MV3 extensions load only in **headed** Chromium. On Linux `npm run test:e2e`
+> auto-uses **Xvfb** when there's no display; on macOS/Windows it runs directly.
 > The fixture picks the pre-installed browser, or Playwright's own if none —
 > override with `CHROMIUM_PATH`. Desktop-picker flows can't be scripted (browser
 > privacy control) and are validated manually.
@@ -153,11 +159,11 @@ status checks to pass before merging* and select **Unit tests** and
 ## Tech stack
 
 Manifest V3 · vanilla JS (no build step) · Konva.js (canvas) · Tesseract.js
-(OCR) · jsPDF (PDF export) · jsQR + `BarcodeDetector` (codes) · pdf.js + pdf-lib
-(PDF signing). All vendored for offline use.
+(OCR) · jsPDF (PDF export) · jsQR + `BarcodeDetector` (decode) · qrcode-generator
+(page-URL QR) · pdf.js + pdf-lib (PDF signing). All vendored for offline use.
 
 ## Third-party licenses
 
 Konva (MIT), jsPDF (MIT), jsQR (Apache-2.0), Tesseract.js (Apache-2.0) and its
-`eng` data (Apache-2.0), pdf.js (Apache-2.0), pdf-lib (MIT) are redistributed
-under their respective licenses in `vendor/`.
+`eng` data (Apache-2.0), pdf.js (Apache-2.0), pdf-lib (MIT) and qrcode-generator
+(MIT) are redistributed under their respective licenses in `vendor/`.

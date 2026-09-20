@@ -76,6 +76,84 @@ $("#open-pdf").addEventListener("click", async () => {
   window.close();
 });
 
+// ---------------------------------------------------------------------------
+// Page QR — encode the active tab's URL, with copy / save / share.
+// ---------------------------------------------------------------------------
+/* global qrcode */
+let qrState = { url: "", dataUrl: "" };
+
+function renderPageQR(url) {
+  const section = $("#qr-section");
+  const note = $("#qr-note");
+  const shareable = /^https?:\/\//i.test(url || "");
+  if (!shareable) {
+    section.hidden = true;
+    note.hidden = false;
+    note.textContent = url ? "This page can't be shared as a link." : "No active page.";
+    return;
+  }
+  section.hidden = false;
+  note.hidden = true;
+
+  // Encode (auto version, medium error-correction so it survives some scaling).
+  const qr = qrcode(0, "M");
+  qr.addData(url);
+  qr.make();
+  const dataUrl = qr.createDataURL(4, 8); // cellSize, margin
+
+  qrState = { url, dataUrl };
+  $("#qr-img").src = dataUrl;
+  const u = $("#qr-url");
+  u.textContent = url;
+  u.title = url;
+}
+// Exposed for E2E (the real popup gets the URL from chrome.tabs).
+window.__snapRenderQR = renderPageQR;
+
+async function initPageQR() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    renderPageQR(tab?.url || "");
+  } catch (_) {
+    renderPageQR("");
+  }
+}
+
+$("#qr-copy-link").addEventListener("click", () => {
+  if (!qrState.url) return;
+  navigator.clipboard.writeText(qrState.url).then(() => toast("Link copied"));
+});
+
+$("#qr-copy-img").addEventListener("click", async () => {
+  if (!qrState.dataUrl) return;
+  try {
+    const blob = await (await fetch(qrState.dataUrl)).blob();
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    toast("QR image copied");
+  } catch (e) {
+    toast("Copy failed");
+  }
+});
+
+$("#qr-save").addEventListener("click", () => {
+  if (!qrState.dataUrl) return;
+  let host = "page";
+  try { host = new URL(qrState.url).hostname || "page"; } catch (_) {}
+  chrome.downloads.download({ url: qrState.dataUrl, filename: `qr-${host}.png` });
+  toast("Saving QR…");
+});
+
+$("#qr-share").addEventListener("click", async () => {
+  if (!qrState.url) return;
+  if (navigator.share) {
+    try { await navigator.share({ title: "Page link", url: qrState.url }); return; }
+    catch (_) { /* cancelled or unsupported — fall through */ }
+  }
+  navigator.clipboard.writeText(qrState.url).then(() => toast("Link copied (share unavailable)"));
+});
+
+initPageQR();
+
 // Live recording timer while popup is open.
 let timerInt = null;
 async function tickTimer() {
