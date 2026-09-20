@@ -155,6 +155,7 @@ button { font-family: inherit; }
   position: absolute; inset: 0; margin: auto; width: max-content; height: max-content;
   text-align: center; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 6px;
 }
+.empty[hidden] { display: none; }  /* class display would otherwise beat [hidden] */
 .empty__icon {
   width: 72px; height: 72px; display: grid; place-items: center; margin-bottom: 6px;
   border-radius: 20px; background: rgba(255,255,255,.12); color: #fff;
