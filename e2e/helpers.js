@@ -43,22 +43,22 @@ async function installExportSpies(page) {
 
 // Generate a real-sized PNG data URL in the browser (canvas). Optionally draw
 // dark text on it — used for OCR fixtures.
-async function makeImageDataUrl(context, { w = 400, h = 300, bg = "#4477aa", text = "", textColor = "#000000" } = {}) {
+async function makeImageDataUrl(context, { w = 400, h = 300, bg = "#4477aa", text = "", textColor = "#000000", font = 52, weight = "bold" } = {}) {
   const page = await context.newPage();
   await page.goto("data:text/html,<body></body>");
-  const url = await page.evaluate(({ w, h, bg, text, textColor }) => {
+  const url = await page.evaluate(({ w, h, bg, text, textColor, font, weight }) => {
     const c = document.createElement("canvas");
     c.width = w; c.height = h;
     const x = c.getContext("2d");
     x.fillStyle = bg; x.fillRect(0, 0, w, h);
     if (text) {
       x.fillStyle = textColor;
-      x.font = "bold 52px Arial, sans-serif";
+      x.font = `${weight} ${font}px Arial, sans-serif`;
       x.textBaseline = "top";
-      x.fillText(text, 24, Math.round(h / 2) - 26);
+      x.fillText(text, 24, Math.round(h / 2) - font / 2);
     }
     return c.toDataURL("image/png");
-  }, { w, h, bg, text, textColor });
+  }, { w, h, bg, text, textColor, font, weight });
   await page.close();
   return url;
 }

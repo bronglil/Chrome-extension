@@ -7,108 +7,149 @@
   <link rel="stylesheet" href="editor.css" />
 </head>
 <body>
-  <header class="ed-topbar">
-    <div class="ed-brand">📸 <strong>SnapShot Studio</strong> <span class="ed-mode" id="mode-label"></span></div>
-    <div class="ed-actions">
-      <button class="ed-tbtn" id="btn-ocr" title="Extract text (OCR)">🔤 OCR</button>
-      <button class="ed-tbtn" id="btn-qr" title="Decode QR / barcode">🔳 QR</button>
-      <div class="ed-sep"></div>
-      <button class="ed-tbtn" id="btn-copy" title="Copy image to clipboard">📋 Copy</button>
-      <button class="ed-tbtn" id="btn-png" title="Save PNG">⬇ PNG</button>
-      <button class="ed-tbtn" id="btn-jpg" title="Save JPEG">⬇ JPG</button>
-      <button class="ed-tbtn" id="btn-pdf" title="Save PDF">⬇ PDF</button>
-      <button class="ed-tbtn" id="btn-upload" title="Upload to S3-compatible bucket">☁ Upload</button>
+  <!-- Title bar -->
+  <header class="bar">
+    <div class="bar__brand">
+      <span class="bar__mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      </span>
+      <span class="bar__name">SnapShot Studio</span>
+      <span class="bar__mode" id="mode-label"></span>
+    </div>
+    <div class="bar__actions">
+      <button class="act" id="btn-ocr" title="Extract text (OCR)">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2M9 19h6M12 5v14"/></svg><span>OCR</span>
+      </button>
+      <button class="act" id="btn-qr" title="Decode QR / barcode">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v.01M14 21h.01M21 21v-3"/></svg><span>QR</span>
+      </button>
+      <span class="act-sep"></span>
+      <button class="act" id="btn-copy" title="Copy image to clipboard">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span>
+      </button>
+      <button class="act" id="btn-png" title="Save PNG"><span class="act__dl"></span>PNG</button>
+      <button class="act" id="btn-jpg" title="Save JPEG"><span class="act__dl"></span>JPG</button>
+      <button class="act" id="btn-pdf" title="Save PDF"><span class="act__dl"></span>PDF</button>
+      <button class="act" id="btn-upload" title="Upload to S3-compatible bucket">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16l-4-4-4 4M12 12v9"/><path d="M20.4 14.9A5 5 0 0 0 18 5.5a6.5 6.5 0 0 0-12.2 2A4.5 4.5 0 0 0 6 16"/></svg><span>Upload</span>
+      </button>
     </div>
   </header>
 
-  <div class="ed-body">
-    <!-- Left tool rail -->
-    <aside class="ed-tools" id="toolbar">
-      <button class="ed-tool active" data-tool="select" title="Select / move">🖱️</button>
-      <button class="ed-tool" data-tool="crop" title="Crop">🔲</button>
-      <button class="ed-tool" data-tool="arrow" title="Arrow">↗️</button>
-      <button class="ed-tool" data-tool="rect" title="Rectangle">▭</button>
-      <button class="ed-tool" data-tool="oval" title="Oval">⬭</button>
-      <button class="ed-tool" data-tool="line" title="Freehand">✏️</button>
-      <button class="ed-tool" data-tool="highlight" title="Highlighter">🖊️</button>
-      <button class="ed-tool" data-tool="text" title="Text">🔡</button>
-      <button class="ed-tool" data-tool="step" title="Step counter">①</button>
-      <button class="ed-tool" data-tool="spotlight" title="Spotlight">💡</button>
-      <button class="ed-tool" data-tool="blur" title="Blur / pixelate">🌫️</button>
+  <div class="stage-region">
+    <!-- Floating tool dock -->
+    <aside class="dock" id="toolbar" aria-label="Tools">
+      <button class="ed-tool active" data-tool="select" data-label="Select">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.5 18 2.6-7.9L21 10.5z"/></svg>
+      </button>
+      <button class="ed-tool" data-tool="crop" data-label="Crop">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/></svg>
+      </button>
+      <span class="dock__sep"></span>
+      <button class="ed-tool" data-tool="arrow" data-label="Arrow">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg>
+      </button>
+      <button class="ed-tool" data-tool="rect" data-label="Rectangle">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
+      </button>
+      <button class="ed-tool" data-tool="oval" data-label="Oval">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="9" ry="7"/></svg>
+      </button>
+      <button class="ed-tool" data-tool="line" data-label="Draw">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21c3 0 3-4 6-4s3 4 6 4M15 5l4 4-9 9H6v-4z"/></svg>
+      </button>
+      <button class="ed-tool" data-tool="highlight" data-label="Highlighter">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l-4 4v3h3l4-4M13 7l4 4M15 5l4 4-7 7-4-4z"/></svg>
+      </button>
+      <button class="ed-tool" data-tool="text" data-label="Text">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2M12 5v14M9 19h6"/></svg>
+      </button>
+      <button class="ed-tool" data-tool="step" data-label="Step counter">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M11 8l-2 1.5M12 8v8"/></svg>
+      </button>
+      <button class="ed-tool" data-tool="spotlight" data-label="Spotlight">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </button>
+      <button class="ed-tool" data-tool="blur" data-label="Blur / pixelate">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c3.5 4 6 7 6 10a6 6 0 0 1-12 0c0-3 2.5-6 6-10z"/></svg>
+      </button>
     </aside>
 
-    <!-- Canvas stage -->
-    <main class="ed-stage-wrap" id="stage-wrap">
-      <div id="stage"></div>
-      <div class="ed-empty" id="empty-state">
-        <p>No image loaded.</p>
-        <p class="ed-empty-sub">Capture from the toolbar popup, or drop an image here.</p>
+    <!-- Canvas -->
+    <main class="stage-wrap" id="stage-wrap">
+      <div class="stage-scroll"><div id="stage"></div></div>
+      <div class="empty" id="empty-state">
+        <div class="empty__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 4"/><circle cx="8.5" cy="9" r="1.5"/></svg>
+        </div>
+        <h2 class="empty__title">No image yet</h2>
+        <p class="empty__sub">Capture from the toolbar popup, or drop an image here.</p>
       </div>
     </main>
 
-    <!-- Right properties panel -->
-    <aside class="ed-panel">
-      <section class="ed-pgroup">
-        <h3>Style</h3>
-        <label>Color <input type="color" id="prop-color" value="#ef4444" /></label>
-        <label>Stroke <input type="range" id="prop-stroke" min="1" max="30" value="4" /></label>
-        <label>Font <input type="range" id="prop-font" min="10" max="96" value="28" /></label>
-        <label>Blur px <input type="range" id="prop-blur" min="4" max="40" value="14" /></label>
+    <!-- Inspector -->
+    <aside class="inspector">
+      <section class="ins">
+        <h3 class="ins__title">Style</h3>
+        <div class="row"><span class="row__label">Color</span><span class="color-pill"><input type="color" id="prop-color" value="#ef4444" /></span></div>
+        <div class="row"><span class="row__label">Stroke</span><input type="range" id="prop-stroke" class="range" min="1" max="30" value="4" /></div>
+        <div class="row"><span class="row__label">Font</span><input type="range" id="prop-font" class="range" min="10" max="96" value="28" /></div>
+        <div class="row"><span class="row__label">Blur px</span><input type="range" id="prop-blur" class="range" min="4" max="40" value="14" /></div>
       </section>
 
-      <section class="ed-pgroup">
-        <h3>Background</h3>
-        <label>Padding <input type="range" id="prop-pad" min="0" max="160" value="0" /></label>
-        <label>Radius <input type="range" id="prop-radius" min="0" max="80" value="0" /></label>
-        <label>Shadow <input type="checkbox" id="prop-shadow" /></label>
-        <label>Fill
-          <select id="prop-bgtype">
+      <section class="ins">
+        <h3 class="ins__title">Background</h3>
+        <div class="row"><span class="row__label">Padding</span><input type="range" id="prop-pad" class="range" min="0" max="160" value="0" /></div>
+        <div class="row"><span class="row__label">Radius</span><input type="range" id="prop-radius" class="range" min="0" max="80" value="0" /></div>
+        <div class="row"><span class="row__label">Shadow</span><input type="checkbox" id="prop-shadow" class="switch" /></div>
+        <div class="row"><span class="row__label">Fill</span>
+          <select id="prop-bgtype" class="select">
             <option value="none">None</option>
             <option value="solid">Solid</option>
             <option value="gradient">Gradient</option>
           </select>
-        </label>
-        <label>BG color <input type="color" id="prop-bgcolor" value="#f1f5f9" /></label>
-        <label>BG color 2 <input type="color" id="prop-bgcolor2" value="#c7d2fe" /></label>
+        </div>
+        <div class="row"><span class="row__label">BG color</span><span class="color-pill"><input type="color" id="prop-bgcolor" value="#f1f5f9" /></span></div>
+        <div class="row"><span class="row__label">BG color 2</span><span class="color-pill"><input type="color" id="prop-bgcolor2" value="#c7d2fe" /></span></div>
       </section>
 
-      <section class="ed-pgroup">
-        <h3>Blur mode</h3>
-        <label><input type="radio" name="blurmode" value="pixelate" checked /> Pixelate</label>
-        <label><input type="radio" name="blurmode" value="blur" /> Gaussian</label>
-        <label><input type="checkbox" id="prop-textblur" /> Text-only blur (OCR-guided)</label>
+      <section class="ins">
+        <h3 class="ins__title">Blur mode</h3>
+        <label class="opt"><input type="radio" name="blurmode" value="pixelate" checked /><span>Pixelate</span></label>
+        <label class="opt"><input type="radio" name="blurmode" value="blur" /><span>Gaussian</span></label>
+        <label class="opt"><input type="checkbox" id="prop-textblur" /><span>Text-only blur (OCR-guided)</span></label>
       </section>
 
-      <section class="ed-pgroup ed-pactions">
-        <button id="btn-crop-apply" class="ed-pbtn" disabled>Apply crop</button>
-        <button id="btn-undo" class="ed-pbtn">Undo</button>
-        <button id="btn-delete" class="ed-pbtn">Delete selected</button>
-        <button id="btn-reset-step" class="ed-pbtn">Reset step counter</button>
+      <section class="ins ins--actions">
+        <button id="btn-crop-apply" class="ibtn" disabled>Apply crop</button>
+        <button id="btn-undo" class="ibtn">Undo</button>
+        <button id="btn-delete" class="ibtn">Delete selected</button>
+        <button id="btn-reset-step" class="ibtn ibtn--ghost">Reset step counter</button>
       </section>
 
-      <section class="ed-pgroup" id="ocr-panel" hidden>
-        <h3>OCR result</h3>
-        <textarea id="ocr-text" rows="8" placeholder="Recognized text…"></textarea>
-        <button id="btn-ocr-copy" class="ed-pbtn">Copy text</button>
+      <section class="ins" id="ocr-panel" hidden>
+        <h3 class="ins__title">OCR result</h3>
+        <textarea id="ocr-text" class="area" rows="8" placeholder="Recognized text…"></textarea>
+        <button id="btn-ocr-copy" class="ibtn">Copy text</button>
       </section>
 
-      <section class="ed-pgroup" id="qr-panel" hidden>
-        <h3>QR / barcode</h3>
-        <div id="qr-result" class="ed-qr-result">—</div>
-        <button id="btn-qr-copy" class="ed-pbtn">Copy value</button>
+      <section class="ins" id="qr-panel" hidden>
+        <h3 class="ins__title">QR / barcode</h3>
+        <div id="qr-result" class="result">—</div>
+        <button id="btn-qr-copy" class="ibtn">Copy value</button>
       </section>
 
-      <section class="ed-pgroup" id="upload-panel" hidden>
-        <h3>S3 upload</h3>
-        <input id="s3-url" placeholder="Presigned PUT URL" />
-        <button id="btn-upload-go" class="ed-pbtn">Upload PNG</button>
-        <div id="upload-result" class="ed-qr-result">—</div>
+      <section class="ins" id="upload-panel" hidden>
+        <h3 class="ins__title">S3 upload</h3>
+        <input id="s3-url" class="field" placeholder="Presigned PUT URL" />
+        <button id="btn-upload-go" class="ibtn">Upload PNG</button>
+        <div id="upload-result" class="result">—</div>
       </section>
     </aside>
   </div>
 
-  <div class="ed-toast" id="toast" hidden></div>
-  <div class="ed-progress" id="progress" hidden><div class="ed-progress-bar" id="progress-bar"></div><span id="progress-label"></span></div>
+  <div class="toast" id="toast" hidden></div>
+  <div class="loader" id="progress" hidden><div class="loader__bar" id="progress-bar"></div><span id="progress-label"></span></div>
 
   <!-- Vendored libraries (offline). -->
   <script src="../../vendor/konva.min.js"></script>

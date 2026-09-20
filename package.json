@@ -4,7 +4,7 @@
   "private": true,
   "description": "SnapShot Studio — MV3 screenshot, recording & annotation Chrome extension.",
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\"",
+    "test": "node --test test/*.test.js",
     "test:e2e": "xvfb-run -a playwright test -c e2e/playwright.config.js",
     "test:all": "npm test && npm run test:e2e",
     "version:check": "node scripts/check-version.js",

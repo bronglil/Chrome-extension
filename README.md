@@ -29,8 +29,11 @@ all PDF work use libraries vendored under `vendor/`.
 - Export PNG / JPEG / multi-page PDF, copy to clipboard, optional S3 upload.
 
 **OCR & QR** (offline)
-- Text extraction via Tesseract.js (WASM); QR/barcode via `BarcodeDetector`
-  with a jsQR fallback.
+- Text extraction via Tesseract.js (WASM). Before recognition the image is
+  preprocessed — upscaled, grayscaled, contrast-stretched and Otsu-binarized —
+  which greatly improves hard cases (small, faint or low-contrast text). Note:
+  no OCR engine is 100% accurate; quality still depends on the source legibility.
+- QR/barcode via `BarcodeDetector` with a jsQR fallback.
 
 **PDF editor & signing**
 - Open a PDF (or drop one in), navigate pages, and add a **signature** to any
@@ -116,7 +119,7 @@ npm ci
 
 - **Unit — `test/` (20):** the reusable core in `src/lib/utils.js` — `clampRect`,
   `throttle`, `rafDebounce`, `loadImage`, `blobToDataUrl`, and `deviceProfile()`.
-- **E2E — `e2e/` (26, Playwright):** load the real unpacked extension and drive
+- **E2E — `e2e/` (27, Playwright):** load the real unpacked extension and drive
   it — popup, editor annotations/export, `captureVisibleTab`, full-page
   scroll-and-stitch, area select, offline OCR & QR, and the PDF editor
   (open, page nav, pen, highlighter, signature, signed-PDF export).
@@ -136,6 +139,11 @@ npm ci
 - `package.json` and `manifest.json` versions are kept in lock-step —
   `npm version <patch|minor|major>` bumps both (`npm run version:check` /
   `version:sync` verify or sync them).
+
+**Require green CI to merge** (recommended): in **Settings → Branches → Add
+branch ruleset** (or classic branch protection) for `master`, enable *Require
+status checks to pass before merging* and select **Unit tests** and
+**End-to-end (Chromium)**. Every PR then blocks merge until both pass.
 
 ---
 

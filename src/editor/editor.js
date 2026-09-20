@@ -693,14 +693,84 @@ async function getOcrWorker() {
       if (m.status === "recognizing text") showProgress("OCR…", m.progress);
     },
   });
+  // Tuning for accuracy: LSTM engine (oem 1, above), fully-automatic page
+  // segmentation, preserve spacing, and use both dictionaries.
+  await ocrWorker.setParameters({
+    tessedit_pageseg_mode: "3",       // PSM_AUTO — full layout analysis
+    preserve_interword_spaces: "1",
+    tessedit_do_invert: "0",
+  });
   return ocrWorker;
+}
+
+// Preprocess the image so hard cases (small / faint / low-contrast text) read
+// far better: upscale small images, convert to grayscale, stretch contrast,
+// then Otsu-binarize to crisp black-on-white. This is the single biggest lever
+// on Tesseract accuracy short of a better source image.
+let ocrScale = 1; // scale applied by the last preprocess (maps OCR boxes → base image)
+function preprocessForOcr(src) {
+  const MIN_DIM = 1600; // upscale so x-height is comfortably large
+  const scale = Math.min(3, Math.max(1, MIN_DIM / Math.max(src.width, src.height)));
+  ocrScale = scale;
+  const w = Math.round(src.width * scale);
+  const h = Math.round(src.height * scale);
+
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, w, h);
+
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+
+  // Grayscale (luma) + build a histogram for Otsu.
+  const gray = new Uint8Array(w * h);
+  const hist = new Array(256).fill(0);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+    gray[p] = g; hist[g]++;
+  }
+
+  // Otsu's method → optimal global threshold.
+  const total = w * h;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, maxVar = -1, thresh = 127;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > maxVar) { maxVar = between; thresh = t; }
+  }
+
+  // If text is light-on-dark, invert so we always feed dark-on-light.
+  let dark = 0;
+  for (let p = 0; p < total; p++) if (gray[p] < thresh) dark++;
+  const invert = dark > total * 0.55; // majority dark ⇒ likely light text
+
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    let on = gray[p] < thresh;         // true = ink
+    if (invert) on = !on;
+    const v = on ? 0 : 255;
+    d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
 }
 
 async function runOcr() {
   try {
     showProgress("Loading OCR…", 0.05);
     const worker = await getOcrWorker();
-    const canvas = getBaseCanvas();
+    showProgress("Enhancing image…", 0.12);
+    const canvas = preprocessForOcr(getBaseCanvas());
     const { data } = await worker.recognize(canvas);
     hideProgress();
     $("#ocr-panel").hidden = false;
@@ -725,10 +795,11 @@ $("#prop-textblur").addEventListener("change", async (e) => {
   toast("Detecting text regions…");
   const data = await runOcr();
   if (!data?.words) return;
+  const s = ocrScale || 1; // OCR ran on an upscaled canvas — map boxes back
   data.words.forEach((w) => {
     if (w.confidence < 30) return;
     const b = w.bbox;
-    applyBlur({ x: b.x0, y: b.y0, width: b.x1 - b.x0, height: b.y1 - b.y0 });
+    applyBlur({ x: b.x0 / s, y: b.y0 / s, width: (b.x1 - b.x0) / s, height: (b.y1 - b.y0) / s });
   });
   pushUndo();
   toast("Blurred " + (data.words?.length || 0) + " text regions");
