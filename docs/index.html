@@ -81,9 +81,11 @@
 
   /* Stats */
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;text-align:center}
-  .stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px}
-  .stat b{display:block;font-size:30px;letter-spacing:-.02em;background:linear-gradient(120deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
-  .stat span{color:var(--soft);font-size:13px}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:24px 18px;transition:.15s}
+  .stat:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));box-shadow:var(--shadow-sm)}
+  .stat b{display:block;font-size:34px;line-height:1;letter-spacing:-.02em;margin-bottom:10px;background:linear-gradient(120deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .stat span{color:var(--soft);font-size:13px;line-height:1.5}
+  .stat span br{content:"";display:block;margin-top:4px}
 
   footer{border-top:1px solid var(--line);padding:32px 0;color:var(--faint);font-size:13px}
   .foot-in{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
@@ -94,14 +96,14 @@
   <span class="brand"><img src="icon128.png" alt=""/> SnapShot Studio</span>
   <span class="nav-links">
     <a href="#features">Features</a>
+    <a href="#tools">Tools</a>
     <a href="#install">Install</a>
-    <a href="#tests">Quality</a>
     <a class="btn btn--primary" href="https://github.com/bronglil/Chrome-extension">GitHub</a>
   </span>
 </div></nav>
 
 <header class="hero"><div class="wrap">
-  <span class="pill">● Manifest V3 · 100% offline · no tracking</span>
+  <span class="pill">● Works in Chrome · 100% offline · no tracking</span>
   <h1>Capture, annotate &amp; sign — <span class="grad">right in Chrome</span></h1>
   <p>Screenshots, full-page capture, screen recording, offline OCR, QR, and a real PDF signer — one fast, private extension. No native app, no build step, no data leaves your browser.</p>
   <div class="cta">
@@ -110,7 +112,7 @@
   </div>
   <div class="badges">
     <span class="badge">Chrome 116+</span>
-    <span class="badge">20 unit + 41 E2E tests</span>
+    <span class="badge">Free &amp; open source</span>
     <span class="badge">Light / dark</span>
     <span class="badge" id="ver-badge">v1.0.0</span>
   </div>
@@ -154,16 +156,16 @@
   </div>
 </div></section>
 
-<section id="tests"><div class="wrap">
-  <p class="eyebrow">Built to last</p>
-  <h2>Tested like a product</h2>
+<section id="tools"><div class="wrap">
+  <p class="eyebrow">What's inside</p>
+  <h2>Every tool, one click away</h2>
   <div class="stats">
-    <div class="stat"><b>61</b><span>automated tests (20 unit + 41 E2E)</span></div>
-    <div class="stat"><b>100%</b><span>offline — no servers, no tracking</span></div>
-    <div class="stat"><b>7</b><span>per-tool performance budgets</span></div>
-    <div class="stat"><b>MV3</b><span>modern, future-proof manifest</span></div>
+    <div class="stat"><b>6</b><span>capture &amp; record modes<br/>visible · area · full&nbsp;page · screen · window · timed</span></div>
+    <div class="stat"><b>9</b><span>annotation tools<br/>arrow · shapes · freehand · highlighter · text · steps · spotlight · blur</span></div>
+    <div class="stat"><b>5</b><span>ways to export<br/>PNG · JPEG · PDF · clipboard · shareable link</span></div>
+    <div class="stat"><b>100%</b><span>offline<br/>nothing ever leaves your browser</span></div>
   </div>
-  <p style="text-align:center;color:var(--soft);margin-top:26px">Every push runs the full suite in real Chromium via GitHub Actions, and releases are tagged and published automatically.</p>
+  <p style="text-align:center;color:var(--soft);margin-top:26px">Plus offline <b>OCR</b> text extraction, <b>QR</b> decode &amp; page sharing, and a full <b>PDF signer</b> with pen and highlighter — all in the same extension.</p>
 </div></section>
 
 <footer><div class="wrap foot-in">
