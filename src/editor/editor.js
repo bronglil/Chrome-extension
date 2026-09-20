@@ -44,6 +44,8 @@ const state = {
   stepCount: 0,
   undoStack: [],
   drawing: null,
+  meta: {},
+  createdAt: 0,
 };
 
 const props = {
@@ -70,12 +72,14 @@ async function boot() {
     const key = "capture:" + id;
     const stored = (await chrome.storage.local.get(key))[key];
     if (stored) {
-      $("#mode-label").textContent = stored.meta?.kind ? "· " + stored.meta.kind : "";
+      state.meta = stored.meta || {};
+      state.createdAt = stored.createdAt || Date.now();
       const img = await loadImage(stored.dataUrl);
       const final = stored.meta?.cropRect
         ? cropSource(img, stored.meta.cropRect)
         : img;
-      initStage(final);
+      await initStage(final);
+      renderSource();
       // Free the storage entry once loaded.
       chrome.storage.local.remove(key);
       return;
@@ -84,6 +88,53 @@ async function boot() {
   // Blank editor: wait for a dropped image.
   $("#empty-state").hidden = false;
   setupDropZone();
+}
+
+const KIND_LABEL = {
+  visible: "Visible tab",
+  area: "Area",
+  fullpage: "Full page",
+  "desktop-screen": "Full screen",
+  "desktop-window": "Window",
+};
+
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return ""; }
+}
+
+function renderSource() {
+  const meta = state.meta || {};
+  const url = meta.url || "";
+  const title = meta.title || hostOf(url) || "Untitled capture";
+  const kind = KIND_LABEL[meta.kind] || (meta.kind ? String(meta.kind) : "Capture");
+  $("#mode-label").textContent = url ? `${kind} · ${hostOf(url) || title}` : kind;
+
+  const panel = $("#source-panel");
+  if (!panel) return;
+  panel.hidden = false;
+  $("#src-title").textContent = title;
+  const link = $("#src-url");
+  if (/^https?:/i.test(url)) {
+    link.href = url;
+    link.textContent = url;
+    link.hidden = false;
+  } else {
+    link.removeAttribute("href");
+    link.textContent = "";
+    link.hidden = true;
+  }
+  const fav = $("#src-fav");
+  if (meta.favIconUrl) {
+    fav.src = meta.favIconUrl;
+    fav.hidden = false;
+  } else {
+    fav.hidden = true;
+  }
+  const facts = [kind];
+  if (state.imgW && state.imgH) facts.push(`${state.imgW}×${state.imgH}`);
+  if (meta.tiles > 1) facts.push(`${meta.tiles} slices`);
+  if (state.createdAt) facts.push(new Date(state.createdAt).toLocaleString());
+  $("#src-facts").innerHTML = facts.map((f) => `<li>${f}</li>`).join("");
 }
 
 const loadImage = U.loadImage;
@@ -125,6 +176,7 @@ async function initStage(img) {
   state.imgW = img.naturalWidth || img.width;
   state.imgH = img.naturalHeight || img.height;
 
+  Konva.pixelRatio = Math.min(DEVICE.maxPixelRatio || 2, window.devicePixelRatio || 1);
   state.stage = new Konva.Stage({
     container: "stage",
     width: state.imgW,
@@ -153,6 +205,7 @@ async function initStage(img) {
 
 // Recompute stage size, background and content offset from padding/radius/shadow.
 function layoutFrame() {
+  if (!state.stage) return;
   const pad = props.pad();
   const W = state.imgW + pad * 2;
   const H = state.imgH + pad * 2;
@@ -189,6 +242,20 @@ function layoutFrame() {
   }
   state.bgLayer.draw();
   state.contentLayer.draw();
+  fitStageView();
+}
+
+function fitStageView() {
+  if (!state.stage) return;
+  const wrap = $("#stage-wrap");
+  const avail = Math.max(280, (wrap?.clientWidth || 800) - 56);
+  const pad = props.pad();
+  const nativeW = state.imgW + pad * 2;
+  const nativeH = state.imgH + pad * 2;
+  const scale = nativeW > avail ? avail / nativeW : 1;
+  state.stage.scale({ x: scale, y: scale });
+  state.stage.width(nativeW * scale);
+  state.stage.height(nativeH * scale);
 }
 
 // Debounce frame relayout to one redraw per animation frame while dragging
@@ -196,6 +263,7 @@ function layoutFrame() {
 const layoutFrameRAF = U.rafDebounce(layoutFrame);
 ["prop-pad", "prop-radius", "prop-shadow", "prop-bgtype", "prop-bgcolor", "prop-bgcolor2"]
   .forEach((id) => $("#" + id).addEventListener("input", layoutFrameRAF));
+window.addEventListener("resize", U.rafDebounce(fitStageView));
 
 // ---------------------------------------------------------------------------
 // Tools
@@ -205,7 +273,8 @@ document.querySelectorAll(".ed-tool").forEach((btn) => {
     document.querySelectorAll(".ed-tool").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     state.tool = btn.dataset.tool;
-    state.transformer.nodes([]);
+    if (!state.stage) return;
+    state.transformer?.nodes([]);
     $("#btn-crop-apply").disabled = state.tool !== "crop";
     state.stage.container().style.cursor =
       state.tool === "select" ? "default" : "crosshair";
@@ -214,7 +283,8 @@ document.querySelectorAll(".ed-tool").forEach((btn) => {
 
 function contentPointer() {
   // Pointer position in content (image) coordinates.
-  const p = state.stage.getPointerPosition();
+  const p = state.stage?.getPointerPosition();
+  if (!p) return null;
   const pad = props.pad();
   return { x: p.x - pad, y: p.y - pad };
 }
@@ -229,12 +299,15 @@ function bindStageEvents() {
       return;
     }
     const pos = contentPointer();
+    if (!pos) return;
     startDrawing(pos);
   });
 
   stage.on("mousemove touchmove", () => {
     if (!state.drawing) return;
-    updateDrawing(contentPointer());
+    const pos = contentPointer();
+    if (!pos) return;
+    updateDrawing(pos);
   });
 
   stage.on("mouseup touchend", () => {
@@ -244,19 +317,28 @@ function bindStageEvents() {
   // Selecting a shape with the select tool.
   stage.on("click tap", (e) => {
     if (state.tool !== "select") return;
-    if (e.target === state.baseImage || e.target === stage) return;
-    if (e.target.getParent() === state.transformer) return;
+    if (e.target === state.baseImage || e.target === stage) {
+      showTextPanel(null);
+      return;
+    }
+    if (e.target.getParent() === state.transformer) {
+      showTextPanel(findTextNode(e.target));
+      return;
+    }
     state.transformer.nodes([e.target]);
     syncPropsFromNode(e.target);
+    showTextPanel(e.target.className === "Text" ? e.target : null);
   });
 
-  // Double-click text to edit.
+  // Double-click text to edit (walk past transformer handles).
   stage.on("dblclick dbltap", (e) => {
-    if (e.target.className === "Text") editText(e.target);
+    const text = findTextNode(e.target);
+    if (text) editText(text);
   });
 }
 
 function startDrawing(pos) {
+  if (!pos || !state.content) return;
   const t = state.tool;
   const color = props.color();
   const sw = props.stroke();
@@ -378,41 +460,74 @@ function addText(pos, color) {
   });
   state.content.add(node);
   state.contentLayer.draw();
+  showTextPanel(node);
   editText(node);
   pushUndo();
 }
 
+function findTextNode(target) {
+  let n = target;
+  while (n && n !== state.stage) {
+    if (n.className === "Text" && !n.getParent()?.hasName?.("step")) return n;
+    n = typeof n.getParent === "function" ? n.getParent() : null;
+  }
+  return (state.transformer?.nodes() || []).find((x) => x.className === "Text") || null;
+}
+
+function showTextPanel(node) {
+  const panel = $("#text-panel");
+  const box = $("#text-value");
+  if (!panel || !box) return;
+  if (!node) { panel.hidden = true; return; }
+  panel.hidden = false;
+  if (box !== document.activeElement) box.value = node.text();
+}
+
 function editText(textNode) {
+  if (!textNode || textNode.className !== "Text") return;
+  state.transformer.nodes([]);
   const stageBox = state.stage.container().getBoundingClientRect();
-  const pad = props.pad();
+  const rect = textNode.getClientRect();
+  const sx = stageBox.width / state.stage.width();
+  const sy = stageBox.height / state.stage.height();
   const area = document.createElement("textarea");
-  document.body.appendChild(area);
   area.value = textNode.text();
   Object.assign(area.style, {
-    position: "absolute",
-    top: stageBox.top + window.scrollY + (textNode.y() + pad) + "px",
-    left: stageBox.left + window.scrollX + (textNode.x() + pad) + "px",
-    fontSize: textNode.fontSize() + "px",
-    color: textNode.fill(),
-    border: "1px solid #3b82f6", background: "white", zIndex: 100,
-    fontFamily: "sans-serif", padding: "2px", minWidth: "60px",
+    position: "fixed",
+    left: Math.max(8, stageBox.left + rect.x * sx) + "px",
+    top: Math.max(8, stageBox.top + rect.y * sy) + "px",
+    minWidth: Math.max(120, rect.width * sx + 16) + "px",
+    minHeight: Math.max(32, rect.height * sy + 8) + "px",
+    fontSize: Math.max(14, textNode.fontSize() * (textNode.scaleY() || 1) * sy) + "px",
+    color: textNode.fill() || "#111",
+    border: "2px solid #4f46e5",
+    borderRadius: "6px",
+    background: "#fff",
+    zIndex: 400,
+    padding: "4px 8px",
+    outline: "none",
+    resize: "both",
   });
+  document.body.appendChild(area);
   textNode.hide();
   state.contentLayer.draw();
-  area.focus();
-  area.select();
-  const done = () => {
-    textNode.text(area.value || " ");
+  const done = (commit) => {
+    if (!area.isConnected) return;
+    if (commit) textNode.text(area.value || " ");
     textNode.show();
     area.remove();
     state.contentLayer.draw();
+    state.transformer.nodes([textNode]);
+    showTextPanel(textNode);
     pushUndo();
   };
-  area.addEventListener("blur", done);
   area.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); area.blur(); }
-    if (e.key === "Escape") { area.value = textNode.text(); area.blur(); }
+    e.stopPropagation();
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); done(true); }
+    if (e.key === "Escape") { e.preventDefault(); done(false); }
   });
+  setTimeout(() => area.addEventListener("blur", () => done(true)), 80);
+  requestAnimationFrame(() => { area.focus(); area.select(); });
 }
 
 // ---- Step counter ----------------------------------------------------------
@@ -456,6 +571,7 @@ function applyBlur(rect) {
   const region = clampRect(rect, state.imgW, state.imgH);
   if (region.width < 2 || region.height < 2) return;
   const src = getBaseCanvas();
+  if (!src) return;
   const mode = props.blurmode();
   const out = document.createElement("canvas");
   out.width = region.width;
@@ -483,6 +599,7 @@ function applyBlur(rect) {
 
 // Render just the base image to a plain canvas for sampling (blur / OCR / QR).
 function getBaseCanvas() {
+  if (!state.baseImage?.image()) return null;
   const c = document.createElement("canvas");
   c.width = state.imgW;
   c.height = state.imgH;
@@ -493,6 +610,7 @@ const clampRect = U.clampRect;
 
 // ---- Crop ------------------------------------------------------------------
 $("#btn-crop-apply").addEventListener("click", () => {
+  if (!state.content) return toast("Load an image first");
   const marquee = state.content.findOne(".crop-marquee-final") || state.content.findOne(".crop-marquee");
   if (!marquee) return toast("Draw a crop rectangle first");
   const r = clampRect(marquee.getClientRect({ relativeTo: state.content }), state.imgW, state.imgH);
@@ -538,9 +656,16 @@ function rgbToHex(c) {
 }
 
 // Live-apply style changes to the selected node.
+$("#text-value")?.addEventListener("input", () => {
+  const node = findTextNode(state.transformer?.nodes()?.[0]);
+  if (!node) return;
+  node.text($("#text-value").value || " ");
+  state.contentLayer.batchDraw();
+});
+
 ["prop-color", "prop-stroke", "prop-font"].forEach((id) =>
   $("#" + id).addEventListener("input", () => {
-    const nodes = state.transformer.nodes();
+    const nodes = state.transformer?.nodes() || [];
     nodes.forEach((n) => {
       if (id === "prop-color") {
         if (n.className === "Text") n.fill(props.color());
@@ -554,7 +679,7 @@ function rgbToHex(c) {
 );
 
 $("#btn-delete").addEventListener("click", () => {
-  const nodes = state.transformer.nodes();
+  const nodes = state.transformer?.nodes() || [];
   if (!nodes.length) return;
   nodes.forEach((n) => n.destroy());
   state.transformer.nodes([]);
@@ -573,6 +698,7 @@ function pushUndo() {
 }
 
 $("#btn-undo").addEventListener("click", () => {
+  if (!state.content) return toast("Load an image first");
   if (state.undoStack.length < 2) return toast("Nothing to undo");
   state.undoStack.pop(); // current
   // Simplest reliable undo: remove the most-recently added annotation.
@@ -594,24 +720,48 @@ document.addEventListener("keydown", (e) => {
 // ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
-function flatten(mime = "image/png", quality = 0.92) {
-  state.transformer.nodes([]);
+function flatten(mime = "image/png", quality = 0.92, pixelRatio = 1) {
+  if (!state.stage) return "";
+  state.transformer?.nodes([]);
+  const scale = state.stage.scaleX() || 1;
+  const viewW = state.stage.width();
+  const viewH = state.stage.height();
+  const pad = props.pad();
+  const nativeW = state.imgW + pad * 2;
+  const nativeH = state.imgH + pad * 2;
+  state.stage.scale({ x: 1, y: 1 });
+  state.stage.width(nativeW);
+  state.stage.height(nativeH);
   state.contentLayer.draw();
-  // Render at the base image's own resolution (pixelRatio 1) so exports are
-  // 1:1 with the capture and memory stays bounded on all devices.
-  return state.stage.toCanvas({ pixelRatio: 1 }).toDataURL(mime, quality);
+  const url = state.stage.toCanvas({ pixelRatio }).toDataURL(mime, quality);
+  state.stage.scale({ x: scale, y: scale });
+  state.stage.width(viewW);
+  state.stage.height(viewH);
+  return url;
 }
 
 function downloadDataUrl(dataUrl, filename) {
   chrome.downloads.download({ url: dataUrl, filename, saveAs: true });
 }
 function stamp() { return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19); }
+function fileBase() {
+  const host = hostOf(state.meta?.url);
+  const kind = (state.meta?.kind || "capture").replace(/[^a-z0-9-]+/gi, "");
+  return host ? `${host}-${kind}` : `SnapShot-${kind}-${stamp()}`;
+}
 
-$("#btn-png").addEventListener("click", () => downloadDataUrl(flatten("image/png"), `SnapShot-${stamp()}.png`));
-$("#btn-jpg").addEventListener("click", () => downloadDataUrl(flatten("image/jpeg", 0.92), `SnapShot-${stamp()}.jpg`));
+$("#btn-png").addEventListener("click", () => {
+  if (!state.stage) return toast("Load an image first");
+  downloadDataUrl(flatten("image/png"), `${fileBase()}.png`);
+});
+$("#btn-jpg").addEventListener("click", () => {
+  if (!state.stage) return toast("Load an image first");
+  downloadDataUrl(flatten("image/jpeg", 0.92), `${fileBase()}.jpg`);
+});
 
 $("#btn-pdf").addEventListener("click", () => {
-  const dataUrl = flatten("image/png");
+  if (!state.stage) return toast("Load an image first");
+  const dataUrl = flatten("image/png", 0.92, DEVICE.maxPixelRatio || 1);
   const img = new Image();
   img.onload = () => {
     const { jsPDF } = jspdf;
@@ -635,14 +785,19 @@ $("#btn-pdf").addEventListener("click", () => {
       y += pageSrcH;
       first = false;
     }
-    pdf.save(`SnapShot-${stamp()}.pdf`);
+    pdf.save(`${fileBase()}.pdf`);
     void sliceH;
   };
   img.src = dataUrl;
 });
 
+$("#src-png")?.addEventListener("click", () => $("#btn-png").click());
+$("#src-pdf")?.addEventListener("click", () => $("#btn-pdf").click());
+$("#src-copy")?.addEventListener("click", () => $("#btn-copy").click());
+
 $("#btn-copy").addEventListener("click", async () => {
   try {
+    if (!state.stage) return toast("Load an image first");
     const dataUrl = flatten("image/png");
     const blob = await (await fetch(dataUrl)).blob();
     await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
@@ -798,6 +953,7 @@ function preprocessForOcr(src) {
 }
 
 async function runOcr() {
+  if (!state.baseImage) return toast("Load an image first");
   try {
     showProgress("Loading OCR…", 0.05);
     const worker = await getOcrWorker();
@@ -842,6 +998,7 @@ $("#prop-textblur").addEventListener("change", async (e) => {
 // ---------------------------------------------------------------------------
 async function decodeCodes() {
   const canvas = getBaseCanvas();
+  if (!canvas) return toast("Load an image first");
   const ctx = canvas.getContext("2d");
   let value = null, format = null;
 

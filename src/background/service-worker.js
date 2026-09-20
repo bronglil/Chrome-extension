@@ -16,7 +16,7 @@ const OFFSCREEN_PATH = "src/offscreen/offscreen.html";
 
 // In-memory recording state (mirrored to storage so the popup survives worker
 // restarts). The actual MediaRecorder lives in the offscreen document.
-let recording = { active: false, startedAt: 0 };
+let recording = { active: false, startedAt: 0, windowId: 0 };
 
 // ---------------------------------------------------------------------------
 // Offscreen document lifecycle
@@ -54,6 +54,15 @@ function shortId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
+function pageMeta(tab, extra = {}) {
+  return {
+    url: tab?.url || "",
+    title: tab?.title || "",
+    favIconUrl: tab?.favIconUrl || "",
+    ...extra,
+  };
+}
+
 async function stashAndOpenEditor(dataUrl, meta = {}) {
   const id = shortId();
   await chrome.storage.local.set({
@@ -74,19 +83,131 @@ async function openEmptyEditor() {
 // ---------------------------------------------------------------------------
 // Tab helpers
 // ---------------------------------------------------------------------------
-async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  return tab;
-}
-
 function isRestricted(url = "") {
   return (
+    !url ||
     url.startsWith("chrome://") ||
     url.startsWith("edge://") ||
     url.startsWith("chrome-extension://") ||
+    url.startsWith("chrome-search://") ||
+    url.startsWith("devtools://") ||
     url.startsWith("https://chrome.google.com/webstore") ||
+    url.startsWith("https://chromewebstore.google.com") ||
     url.startsWith("about:")
   );
+}
+
+function isCapturable(tab) {
+  return !!(tab && tab.id && !isRestricted(tab.url) && /^https?:/i.test(tab.url));
+}
+
+async function getActiveTab() {
+  // Prefer a normal browser window — the toolbar popup is its own window, and
+  // opening popup.html as a tab would otherwise make *that* the "active" tab.
+  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+  const focused = wins.find((w) => w.focused) || wins[0];
+  const active = focused?.tabs?.find((t) => t.active);
+  if (active) return active;
+  const [fallback] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return fallback;
+}
+
+async function getCaptureTab() {
+  const active = await getActiveTab();
+  if (isCapturable(active)) return active;
+
+  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+  for (const win of [wins.find((w) => w.id === active?.windowId), ...wins].filter(Boolean)) {
+    const page = (win.tabs || []).find(isCapturable);
+    if (page) {
+      await chrome.tabs.update(page.id, { active: true });
+      await chrome.windows.update(page.windowId, { focused: true });
+      return page;
+    }
+  }
+  throw new Error(
+    "Open a regular website first (https://…). Chrome pages and the extension itself can't be captured."
+  );
+}
+
+let jobBusy = false;
+let queuedJob = null;
+async function consumePendingJob(job) {
+  if (!job) return;
+  if (jobBusy) {
+    queuedJob = job;
+    return;
+  }
+  jobBusy = true;
+  try {
+    await ensureOffscreen().catch(() => {});
+    await chrome.storage.session.remove("pendingJob");
+    if (job.type === "RECORD") {
+      await toggleRecording(job.options || {});
+    } else if (job.type === "CAPTURE") {
+      if (job.delayMs) await new Promise((r) => setTimeout(r, job.delayMs));
+      await runCapture(job.action);
+    }
+  } catch (err) {
+    console.error("[SnapShot SW] job", err);
+    showPageError(friendlyError(err));
+  } finally {
+    jobBusy = false;
+    const next = queuedJob;
+    queuedJob = null;
+    if (next) consumePendingJob(next);
+  }
+}
+
+async function showPageError(message) {
+  try {
+    const tab = await getActiveTab();
+    if (!tab?.id || isRestricted(tab.url)) return;
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (text) => {
+        document.querySelector(".snapshot-error")?.remove();
+        const el = document.createElement("div");
+        el.className = "snapshot-error";
+        el.textContent = text;
+        Object.assign(el.style, {
+          position: "fixed",
+          top: "16px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: "2147483647",
+          background: "#111827",
+          color: "#fff",
+          padding: "10px 14px",
+          borderRadius: "10px",
+          font: "13px/1.4 -apple-system, Segoe UI, sans-serif",
+          boxShadow: "0 10px 24px rgba(0,0,0,.3)",
+          maxWidth: "90vw",
+        });
+        document.documentElement.appendChild(el);
+        setTimeout(() => el.remove(), 5200);
+      },
+      args: [message],
+    });
+  } catch (_) { /* no page to tell */ }
+}
+
+chrome.storage.session.onChanged.addListener((changes) => {
+  if (changes.pendingJob?.newValue) consumePendingJob(changes.pendingJob.newValue);
+});
+chrome.storage.session.get("pendingJob").then((s) => {
+  if (s.pendingJob) consumePendingJob(s.pendingJob);
+});
+
+function friendlyError(err) {
+  const msg = err?.message || String(err);
+  if (/respective host|Cannot access contents of the page/i.test(msg)) {
+    return "Can't access this page. Open a normal website, then in chrome://extensions set SnapShot Studio → Site access → On all sites.";
+  }
+  if (/cancell|NotAllowed|denied|abort/i.test(msg)) {
+    return "Share was closed before anything was picked. Try again and click Share in Chrome’s dialog.";
+  }
+  return msg;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,9 +236,9 @@ async function setPageQr(on) {
     if (!on && registered) await chrome.scripting.unregisterContentScripts({ ids: ["pageqr"] });
   } catch (e) { console.warn("[SnapShot] pageqr register", e); }
 
-  // Reflect immediately on the current tab.
+  // Reflect immediately on a real webpage, never on chrome:// or the popup.
   const tab = await getActiveTab();
-  if (tab && !isRestricted(tab.url)) {
+  if (isCapturable(tab)) {
     if (on) {
       chrome.scripting.executeScript({ target: { tabId: tab.id }, files: PAGE_QR_SCRIPT.js }).catch(() => {});
     } else {
@@ -155,123 +276,173 @@ async function captureVisible(windowId) {
 
 // Make sure the content script is present, then message it.
 async function ensureContentScript(tabId) {
+  let api = 0;
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "PING" });
-  } catch (_) {
-    await chrome.scripting.insertCSS({
+    const [inj] = await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["src/content/area-select.css"],
+      func: () => window.__snapshotStudioApi || 0,
     });
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      // Shared utils first so content.js can use SnapShotUtils.
-      files: ["src/lib/utils.js", "src/content/content.js"],
-    });
-  }
+    api = inj?.result || 0;
+  } catch (_) { /* restricted page or not injected yet */ }
+  if (api >= 4) return;
+  await chrome.scripting.insertCSS({
+    target: { tabId },
+    files: ["src/content/area-select.css"],
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["src/lib/utils.js", "src/content/content.js"],
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Capture actions
 // ---------------------------------------------------------------------------
 async function captureVisibleArea() {
-  const tab = await getActiveTab();
-  if (!tab) throw new Error("No active tab.");
-  if (isRestricted(tab.url)) throw new Error("Can't capture this page.");
+  const tab = await getCaptureTab();
   const dataUrl = await captureVisible(tab.windowId);
-  await stashAndOpenEditor(dataUrl, { kind: "visible", url: tab.url, title: tab.title });
+  await stashAndOpenEditor(dataUrl, pageMeta(tab, { kind: "visible" }));
 }
 
 async function captureArea() {
-  const tab = await getActiveTab();
-  if (!tab) throw new Error("No active tab.");
-  if (isRestricted(tab.url)) throw new Error("Can't capture this page.");
+  const tab = await getCaptureTab();
   await ensureContentScript(tab.id);
   // The content script shows the overlay, returns the selected rectangle
   // (already scaled by devicePixelRatio) or null if cancelled.
   const rect = await chrome.tabs.sendMessage(tab.id, { type: "START_AREA_SELECT" });
   if (!rect) return; // cancelled
   const dataUrl = await captureVisible(tab.windowId);
-  await stashAndOpenEditor(dataUrl, {
-    kind: "area",
-    cropRect: rect,
-    url: tab.url,
-    title: tab.title,
-  });
+  await stashAndOpenEditor(dataUrl, pageMeta(tab, { kind: "area", cropRect: rect }));
 }
 
 async function captureFullPage() {
-  const tab = await getActiveTab();
-  if (!tab) throw new Error("No active tab.");
-  if (isRestricted(tab.url)) throw new Error("Can't capture this page.");
+  const tab = await getCaptureTab();
   await ensureContentScript(tab.id);
   // The content script drives scroll-and-stitch, calling back to CAPTURE_SLICE
   // for each viewport (which we service with captureVisibleTab, throttled).
   const result = await chrome.tabs.sendMessage(tab.id, { type: "START_FULL_PAGE" });
   if (!result || result.error) throw new Error(result?.error || "Full-page capture failed.");
-  await stashAndOpenEditor(result.dataUrl, {
+  await stashAndOpenEditor(result.dataUrl, pageMeta(tab, {
     kind: "fullpage",
     width: result.width,
     height: result.height,
     tiles: result.tiles || 1,
-    url: tab.url,
-    title: tab.title,
-  });
+  }));
 }
 
-// Desktop capture (screen / window). Chrome always shows its picker.
-function chooseDesktopMedia(sources, tab) {
-  return new Promise((resolve, reject) => {
-    const reqId = chrome.desktopCapture.chooseDesktopMedia(sources, tab, (streamId, opts) => {
-      if (!streamId) return reject(new Error("Capture cancelled."));
-      resolve({ streamId, opts });
+async function ocrArea() {
+  const tab = await getCaptureTab();
+  await ensureContentScript(tab.id);
+  const result = await chrome.tabs.sendMessage(tab.id, { type: "START_COPY_TEXT" });
+  if (!result || result.cancelled) return;
+  const rect = result.deviceRect;
+  if (!rect) return;
+
+  const dataUrl = await captureVisible(tab.windowId);
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: "COPY_TEXT_CAPTURED" });
+  } catch (_) { /* overlay gone */ }
+
+  const res = await toOffscreen({ type: "OCR_CROP", dataUrl, rect });
+  const text = String(res?.text || "").trim() || String(result.domText || "").trim();
+  try {
+    await chrome.tabs.sendMessage(tab.id, {
+      type: "FILL_COPY_TEXT",
+      text,
+      error: text ? "" : (res?.error || "No text found in this area."),
     });
-    // reqId can be used to cancel; not needed here.
-    void reqId;
-  });
+  } catch (_) { /* overlay already closed */ }
 }
 
+// Desktop still: a small page owns getDisplayMedia so Chrome's share
+// dialog is not cancelled when the extension popup closes.
 async function captureDesktop(kind) {
-  const tab = await getActiveTab();
-  const sources = kind === "window" ? ["window"] : ["screen", "window"];
-  const { streamId } = await chooseDesktopMedia(sources, tab);
-  const res = await toOffscreen({ type: "GRAB_FRAME", streamId });
-  if (res?.error) throw new Error(res.error);
-  await stashAndOpenEditor(res.dataUrl, { kind: "desktop-" + kind });
+  const prefix = chrome.runtime.getURL("src/capture/desktop.html");
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find((t) => (t.url || "").startsWith(prefix));
+  const url = prefix + "?kind=" + encodeURIComponent(kind);
+  if (existing) {
+    await chrome.tabs.update(existing.id, { url });
+    await chrome.windows.update(existing.windowId, { focused: true });
+    return;
+  }
+  await chrome.windows.create({
+    url,
+    type: "popup",
+    width: 380,
+    height: 280,
+    focused: true,
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Recording
 // ---------------------------------------------------------------------------
+async function findRecorderTab() {
+  if (recording.windowId) {
+    try {
+      const tabs = await chrome.tabs.query({ windowId: recording.windowId });
+      if (tabs[0]) return tabs[0];
+    } catch (_) { /* window already gone */ }
+  }
+  const prefix = chrome.runtime.getURL("src/recorder/recorder.html");
+  const tabs = await chrome.tabs.query({});
+  return tabs.find((t) => (t.url || "").startsWith(prefix)) || null;
+}
+
 async function toggleRecording(options = {}) {
   if (recording.active) {
-    const res = await toOffscreen({ type: "STOP_RECORDING" });
-    recording = { active: false, startedAt: 0 };
-    await chrome.storage.local.set({ recordingState: recording });
-    chrome.action.setBadgeText({ text: "" });
-    if (res?.error) return { error: res.error, recording: false };
-    return { recording: false };
+    chrome.runtime.sendMessage({ type: "RECORDER_STOP" }).catch(() => {});
+    // The recorder page saves the file and reports RECORDING_DONE.
+    return { recording: true, stopping: true, startedAt: recording.startedAt };
   }
 
-  const tab = await getActiveTab();
-  // Screen/window + optional system audio via the desktop picker.
-  const sources = ["screen", "window", "tab"];
-  const { streamId } = await chooseDesktopMedia(
-    options.systemAudio ? [...sources, "audio"] : sources,
-    tab
-  );
-  const res = await toOffscreen({
-    type: "START_RECORDING",
-    streamId,
-    mic: !!options.mic,
-    systemAudio: !!options.systemAudio,
+  const qs = new URLSearchParams({
+    cam: options.camera ? "1" : "0",
+    mic: options.mic ? "1" : "0",
+    audio: options.systemAudio ? "1" : "0",
   });
-  if (res?.error) return { error: res.error, recording: false };
+  const existing = await findRecorderTab();
+  if (existing) {
+    recording = {
+      active: true,
+      pending: !recording.startedAt,
+      startedAt: recording.startedAt || 0,
+      windowId: existing.windowId,
+    };
+    await chrome.storage.local.set({ recordingState: recording });
+    await chrome.windows.update(existing.windowId, { focused: true });
+    return { recording: true, pending: !!recording.pending, startedAt: recording.startedAt };
+  }
 
-  recording = { active: true, startedAt: Date.now() };
+  const win = await chrome.windows.create({
+    url: chrome.runtime.getURL("src/recorder/recorder.html") + "?" + qs.toString(),
+    type: "popup",
+    width: 420,
+    height: 620,
+    focused: true,
+  });
+  recording = { active: true, startedAt: 0, pending: true, windowId: win.id };
+  await chrome.storage.local.set({ recordingState: recording });
+  return { recording: true, pending: true };
+}
+
+async function markRecordingStarted(startedAt) {
+  recording = {
+    active: true,
+    startedAt: startedAt || Date.now(),
+    pending: false,
+    windowId: recording.windowId || 0,
+  };
   await chrome.storage.local.set({ recordingState: recording });
   chrome.action.setBadgeBackgroundColor({ color: "#ef4444" });
   chrome.action.setBadgeText({ text: "●" });
-  return { recording: true, startedAt: recording.startedAt };
+}
+
+async function markRecordingIdle() {
+  recording = { active: false, startedAt: 0 };
+  await chrome.storage.local.set({ recordingState: recording });
+  chrome.action.setBadgeText({ text: "" });
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +455,7 @@ function runCapture(action) {
     case "capture-full-page": return captureFullPage();
     case "capture-fullscreen": return captureDesktop("screen");
     case "capture-window": return captureDesktop("window");
+    case "ocr-area": return ocrArea();
     default: return Promise.reject(new Error("Unknown action: " + action));
   }
 }
@@ -294,6 +466,7 @@ function runCapture(action) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Ignore messages addressed to the offscreen document.
   if (msg?.target === "offscreen") return false;
+  if (msg?.type === "RECORDER_STOP") return false;
 
   (async () => {
     try {
@@ -309,10 +482,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "TOGGLE_RECORDING":
-          sendResponse(await toggleRecording(msg.options));
+          sendResponse(await toggleRecording(msg.options || {}));
           break;
         case "GET_RECORDING_STATE":
-          sendResponse({ recording: recording.active, startedAt: recording.startedAt });
+          sendResponse({ recording: recording.active, startedAt: recording.startedAt, pending: !!recording.pending });
+          break;
+        case "RECORDING_STARTED":
+          await markRecordingStarted(msg.startedAt);
+          sendResponse({ ok: true });
+          break;
+        case "DESKTOP_FRAME": {
+          if (!msg.dataUrl) throw new Error("No screenshot received.");
+          await stashAndOpenEditor(msg.dataUrl, { kind: msg.kind || "desktop-screen" });
+          sendResponse({ ok: true });
+          break;
+        }
+        case "RECORDING_CANCELLED":
+          await markRecordingIdle();
+          sendResponse({ ok: true });
           break;
         case "OPEN_EDITOR":
           await openEmptyEditor();
@@ -334,10 +521,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "RECORDING_DONE": {
-          // Offscreen finished a recording and produced a WebM blob URL/dataUrl.
-          recording = { active: false, startedAt: 0 };
-          await chrome.storage.local.set({ recordingState: recording });
-          chrome.action.setBadgeText({ text: "" });
+          await markRecordingIdle();
           if (msg.dataUrl) {
             const stamp = new Date().toISOString().replace(/[:.]/g, "-");
             await chrome.downloads.download({
@@ -354,7 +538,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     } catch (err) {
       console.error("[SnapShot SW]", err);
-      sendResponse({ error: err.message || String(err) });
+      sendResponse({ error: friendlyError(err) });
     }
   })();
 
@@ -368,7 +552,10 @@ chrome.commands.onCommand.addListener(async (command) => {
   try {
     if (command === "toggle-recording") {
       const { recordingState } = await chrome.storage.local.get("recordingState");
-      await toggleRecording(recordingState?.active ? {} : { systemAudio: true });
+      const prefs = (await chrome.storage.local.get("recPrefs")).recPrefs || {};
+      await toggleRecording(recordingState?.active
+        ? {}
+        : { camera: !!prefs.camera, mic: !!prefs.mic, systemAudio: !!prefs.systemAudio });
     } else {
       await runCapture(command);
     }
@@ -390,4 +577,10 @@ chrome.runtime.onStartup.addListener(async () => {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ recordingState: { active: false, startedAt: 0 } });
   syncPageQr();
+});
+
+chrome.windows.onRemoved.addListener((id) => {
+  if (recording.windowId && recording.windowId === id) {
+    markRecordingIdle();
+  }
 });

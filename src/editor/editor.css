@@ -47,11 +47,12 @@ button { font-family: inherit; }
   display: flex; align-items: center; justify-content: space-between;
   height: 52px; padding: 0 14px; background: var(--surface); border-bottom: 1px solid var(--line);
 }
-.bar__brand { display: flex; align-items: center; gap: 9px; }
-.bar__mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px;
-  color: #fff; background: linear-gradient(135deg, var(--accent), #8b5cf6); box-shadow: var(--shadow-1); }
+.bar__brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.bar__logo { width: 28px; height: 28px; border-radius: 8px; flex: none; box-shadow: var(--shadow-1); }
+.bar__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 1.2; }
 .bar__name { font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; }
-.bar__mode { font-size: 12px; color: var(--ink-faint); }
+.bar__mode { font-size: 11.5px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 42vw; }
 .bar__actions { display: flex; align-items: center; gap: 4px; }
 .act {
   display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 11px;
@@ -69,29 +70,24 @@ button { font-family: inherit; }
 /* Stage region */
 .stage-region { flex: 1; display: flex; min-height: 0; position: relative; }
 
-/* Floating tool dock */
+/* Floating tool dock — icon + name so each tool is obvious at a glance */
 .dock {
-  align-self: flex-start; margin: 16px 0 16px 16px; padding: 6px;
+  align-self: flex-start; margin: 16px 0 16px 16px; padding: 6px 5px;
   display: flex; flex-direction: column; gap: 2px;
+  max-height: calc(100% - 32px); overflow-y: auto;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: 14px; box-shadow: var(--shadow-dock); z-index: 5;
 }
 .ed-tool {
-  position: relative; width: 40px; height: 40px; display: grid; place-items: center;
+  position: relative; width: 58px; min-height: 46px; padding: 5px 3px 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   border: none; border-radius: 10px; background: transparent; color: var(--ink-soft);
   cursor: pointer; transition: background .13s, color .13s;
 }
+.ed-tool__name { font-size: 9px; font-weight: 650; letter-spacing: -.01em; line-height: 1.1; color: inherit; }
 .ed-tool:hover { background: var(--surface-2); color: var(--ink); }
 .ed-tool.active { background: var(--accent); color: #fff; box-shadow: 0 2px 6px rgba(79,70,229,.4); }
-.dock__sep { height: 1px; margin: 4px 6px; background: var(--line); }
-.ed-tool::after {
-  content: attr(data-label); position: absolute; left: 48px; top: 50%;
-  transform: translateY(-50%) scale(.96); transform-origin: left center;
-  background: var(--ink); color: var(--surface); font-size: 11.5px; font-weight: 500;
-  padding: 4px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none;
-  opacity: 0; transition: opacity .12s, transform .12s; z-index: 20; box-shadow: var(--shadow-2);
-}
-.ed-tool:hover::after { opacity: 1; transform: translateY(-50%) scale(1); }
+.dock__sep { height: 1px; margin: 4px 8px; background: var(--line); }
 
 /* Canvas */
 .stage-wrap { flex: 1; position: relative; background: var(--canvas); overflow: hidden; }
@@ -99,7 +95,8 @@ button { font-family: inherit; }
   position: absolute; inset: 0; overflow: auto; padding: 32px 28px;
   display: flex; align-items: flex-start; justify-content: center;
 }
-#stage { border-radius: 4px; box-shadow: 0 12px 34px rgba(0,0,0,.32); }
+#stage { border-radius: 4px; box-shadow: 0 12px 34px rgba(0,0,0,.32); overflow: hidden; }
+#stage canvas { display: block; image-rendering: auto; }
 .empty {
   position: absolute; inset: 0; margin: auto; width: max-content; height: max-content;
   display: flex; flex-direction: column; align-items: center; gap: 4px; color: #fff; text-align: center;
@@ -115,6 +112,18 @@ button { font-family: inherit; }
 /* Inspector */
 .inspector { width: 250px; background: var(--surface); border-left: 1px solid var(--line);
   overflow-y: auto; padding: 16px; }
+.src { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.src__fav { width: 18px; height: 18px; border-radius: 4px; flex: none; margin-top: 2px; }
+.src__copy { min-width: 0; flex: 1; }
+.src__title { font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; line-height: 1.3; }
+.src__url { display: block; margin-top: 3px; font-size: 11.5px; color: var(--accent); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src__url:hover { text-decoration: underline; }
+.src__facts { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.src__facts li { font-size: 11px; font-weight: 550; color: var(--ink-soft); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; }
+.src__acts { display: flex; flex-direction: column; gap: 7px; }
+
 .ins { padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
 .ins:last-child { border-bottom: none; }
 .ins__title { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; font-size: 11px;

@@ -27,15 +27,16 @@ test.describe("PDF editor", () => {
     await loadSample(page);
     const n = await page.evaluate(() => window.__pdfEditor.state.numPages);
     expect(n).toBe(2);
+    await expect(page.locator(".pe-page")).toHaveCount(2);
     await expect(page.locator("#pe-empty")).toBeHidden(); // empty prompt gone once a PDF loads
   });
 
   test("navigates between pages", async ({ context, extensionId }) => {
     const page = await openPdfEditor(context, extensionId);
     await loadSample(page);
-    await page.click("#pe-next");
+    await page.evaluate(() => window.__pdfEditor.goToPage(2));
     await expect(page.locator("#pe-pageinfo")).toHaveText("2 / 2");
-    await page.click("#pe-prev");
+    await page.evaluate(() => window.__pdfEditor.goToPage(1));
     await expect(page.locator("#pe-pageinfo")).toHaveText("1 / 2");
   });
 
@@ -71,6 +72,26 @@ test.describe("PDF editor", () => {
     expect(await overlayCount(page, ".pen")).toBe(1);
   });
 
+  test("adds text and lets you edit it afterwards", async ({ context, extensionId }) => {
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+    await page.click('.rail__tool[data-tool="text"]');
+    const box = await page.locator("#pe-stage").boundingBox();
+    await page.mouse.click(box.x + 140, box.y + 110);
+    const inline = page.locator("textarea.text-inline");
+    await expect(inline).toBeVisible({ timeout: 10_000 });
+    await inline.fill("Hello PDF");
+    await inline.press("Enter");
+    await expect.poll(() => page.evaluate(
+      () => window.__pdfEditor.state.overlayLayer.find("Text").map((t) => t.text())
+    )).toContain("Hello PDF");
+    await expect(page.locator("#pe-text-panel")).toBeVisible();
+    await page.fill("#pe-text-value", "Edited later");
+    await expect.poll(() => page.evaluate(
+      () => window.__pdfEditor.state.overlayLayer.find("Text").some((t) => t.text() === "Edited later")
+    )).toBe(true);
+  });
+
   test("places a typed signature onto the page", async ({ context, extensionId }) => {
     const page = await openPdfEditor(context, extensionId);
     await loadSample(page);
@@ -95,9 +116,9 @@ test.describe("PDF editor", () => {
     await page.click("#pe-sig-add");
     await expect.poll(() => overlayCount(page, ".sig")).toBe(1);
     // Go to page 2 (no sig) and back to page 1 (sig restored).
-    await page.click("#pe-next");
+    await page.evaluate(() => window.__pdfEditor.goToPage(2));
     await expect.poll(() => overlayCount(page, ".sig")).toBe(0);
-    await page.click("#pe-prev");
+    await page.evaluate(() => window.__pdfEditor.goToPage(1));
     await expect.poll(() => overlayCount(page, ".sig")).toBe(1);
   });
 
@@ -111,7 +132,7 @@ test.describe("PDF editor", () => {
       () => window.__pdfEditor.state.ackLayer.getChildren().length
     )).toBeGreaterThan(0);
     // It re-appears on the next page too.
-    await page.click("#pe-next");
+    await page.evaluate(() => window.__pdfEditor.goToPage(2));
     await expect.poll(() => page.evaluate(
       () => window.__pdfEditor.state.ackLayer.getChildren().length
     )).toBeGreaterThan(0);
