@@ -138,10 +138,19 @@ async function syncPageQr() {
 }
 
 // captureVisibleTab is rate-limited to ~2/sec; callers that loop must throttle.
+// It can also transiently fail with "image readback failed" (e.g. right after a
+// tab switch, or on GPU-less/headless compositors), so retry a few times.
 async function captureVisible(windowId) {
-  return chrome.tabs.captureVisibleTab(windowId, {
-    format: "png",
-  });
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
 }
 
 // Make sure the content script is present, then message it.
