@@ -27,6 +27,7 @@ test.describe("PDF editor", () => {
     await loadSample(page);
     const n = await page.evaluate(() => window.__pdfEditor.state.numPages);
     expect(n).toBe(2);
+    await expect(page.locator("#pe-empty")).toBeHidden(); // empty prompt gone once a PDF loads
   });
 
   test("navigates between pages", async ({ context, extensionId }) => {
