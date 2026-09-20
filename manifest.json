@@ -55,6 +55,10 @@
     },
     "toggle-recording": {
       "description": "Start / stop screen recording"
+    },
+    "paste-clip-history": {
+      "suggested_key": { "default": "Ctrl+Shift+V", "mac": "Command+Shift+V" },
+      "description": "Paste from last 5 copies"
     }
   },
   "web_accessible_resources": [

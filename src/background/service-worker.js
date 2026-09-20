@@ -279,6 +279,47 @@ async function setPageQr(on) {
 }
 
 // Keep the dynamic registration in sync with the stored preference.
+const CLIP_KEY = "clipHistory";
+const CLIP_MAX = 5;
+const CLIP_SCRIPT = {
+  id: "cliphist",
+  matches: ["<all_urls>"],
+  js: ["src/content/clip-history.js"],
+  runAt: "document_idle",
+};
+
+async function rememberClip(text) {
+  const t = String(text || "").trim();
+  if (!t) return;
+  const clipped = t.length > 8000 ? t.slice(0, 8000) : t;
+  const { clipHistory } = await chrome.storage.session.get(CLIP_KEY);
+  const list = Array.isArray(clipHistory) ? clipHistory : [];
+  await chrome.storage.session.set({
+    [CLIP_KEY]: [clipped, ...list.filter((x) => x !== clipped)].slice(0, CLIP_MAX),
+  });
+}
+
+async function syncClipHistory() {
+  try {
+    const r = await chrome.scripting.getRegisteredContentScripts({ ids: ["cliphist"] });
+    if (!r.length) await chrome.scripting.registerContentScripts([CLIP_SCRIPT]);
+  } catch (e) { console.warn("[SnapShot] cliphist", e); }
+}
+
+async function showClipPicker() {
+  const tab = await getActiveTab();
+  if (!isCapturable(tab)) return;
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: "SHOW_CLIP_PICKER" });
+  } catch (_) {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: CLIP_SCRIPT.js,
+    });
+    await chrome.tabs.sendMessage(tab.id, { type: "SHOW_CLIP_PICKER" }).catch(() => {});
+  }
+}
+
 async function syncPageQr() {
   const { pageQrEnabled } = await chrome.storage.local.get("pageQrEnabled");
   const registered = await pageQrRegistered();
@@ -526,6 +567,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await markRecordingStarted(msg.startedAt);
           sendResponse({ ok: true });
           break;
+        case "CLIP_REMEMBER":
+          await rememberClip(msg.text);
+          sendResponse({ ok: true });
+          break;
         case "TAKE_CAPTURE":
           sendResponse(takeCapture(msg.id) || {});
           break;
@@ -588,7 +633,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---------------------------------------------------------------------------
 chrome.commands.onCommand.addListener(async (command) => {
   try {
-    if (command === "toggle-recording") {
+    if (command === "paste-clip-history") {
+      await showClipPicker();
+    } else if (command === "toggle-recording") {
       const { recordingState } = await chrome.storage.local.get("recordingState");
       const prefs = (await chrome.storage.local.get("recPrefs")).recPrefs || {};
       await toggleRecording(recordingState?.active
@@ -611,15 +658,18 @@ chrome.runtime.onStartup.addListener(async () => {
   }
   await clearDiskCaptures().catch(() => {});
   syncPageQr();
+  syncClipHistory();
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ recordingState: { active: false, startedAt: 0 } });
   clearDiskCaptures().catch(() => {});
   syncPageQr();
+  syncClipHistory();
 });
 
 clearDiskCaptures().catch(() => {});
+syncClipHistory();
 
 chrome.windows.onRemoved.addListener((id) => {
   if (recording.windowId && recording.windowId === id) {

@@ -170,6 +170,7 @@
     liveCopy.copyBtn.disabled = !t;
     if (t) {
       navigator.clipboard.writeText(t).catch(() => {});
+      chrome.runtime.sendMessage({ type: "CLIP_REMEMBER", text: t }).catch(() => {});
       liveCopy.copyBtn.textContent = "Copied";
       liveCopy.area.focus();
       liveCopy.area.select();

@@ -174,6 +174,7 @@ async function initPageQR() {
 $("#qr-copy-link").addEventListener("click", () => {
   if (!qrState.url) return;
   navigator.clipboard.writeText(qrState.url).then(() => toast("Link copied"));
+  send({ type: "CLIP_REMEMBER", text: qrState.url }).catch(() => {});
 });
 
 $("#qr-copy-img").addEventListener("click", async () => {
