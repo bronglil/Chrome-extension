@@ -36,7 +36,39 @@ const state = {
   pageSizes: {},       // { [pageNum]: {w,h} } in rendered pixels
   acknowledge: false,  // stamp "AK" at the bottom of every page
   ackLayer: null,      // on-screen AK badge (redrawn per page; not serialized)
+  pageCanvas: null,    // the rendered pixels of the current page (for occupancy checks)
 };
+
+// Is a corner region of a rendered page canvas already occupied by content?
+// Samples the bottom band and returns the ink ratio (0..1) of non-white pixels.
+function regionInkRatio(canvas, side) {
+  try {
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const bandH = Math.max(24, Math.round(canvas.height * 0.09));
+    const boxW = Math.round(canvas.width * 0.34);
+    const x = side === "right" ? canvas.width - boxW : 0;
+    const y = canvas.height - bandH;
+    const { data } = ctx.getImageData(x, y, boxW, bandH);
+    let ink = 0, total = 0;
+    for (let i = 0; i < data.length; i += 16) { // sample every 4th pixel
+      total++;
+      const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+      if (a > 20 && (r < 235 || g < 235 || b < 235)) ink++;
+    }
+    return total ? ink / total : 0;
+  } catch (_) { return 0; }
+}
+
+// Pick the side for the AK so it does not overwrite existing content:
+// prefer right; if right is busy use left; if both busy, the emptier one.
+function chooseAckSide(canvas) {
+  const OCCUPIED = 0.015; // >1.5% of sampled pixels have ink ⇒ occupied
+  const right = regionInkRatio(canvas, "right");
+  const left = regionInkRatio(canvas, "left");
+  if (right < OCCUPIED) return "right";
+  if (left < OCCUPIED) return "left";
+  return right <= left ? "right" : "left";
+}
 
 // ---- UI helpers ------------------------------------------------------------
 function toast(msg, ms = 2200) {
@@ -121,6 +153,7 @@ async function renderPage(num) {
   state.stage.add(state.baseLayer, state.overlayLayer);
   state.baseLayer.add(new Konva.Image({ image: canvas, width: canvas.width, height: canvas.height }));
   state.baseLayer.draw();
+  state.pageCanvas = canvas; // keep the pixels for AK occupancy detection
 
   state.transformer = new Konva.Transformer({ rotateEnabled: true, ignoreStroke: true });
   state.overlayLayer.add(state.transformer);
@@ -151,7 +184,10 @@ function drawAck() {
       fill: "#4f46e5",
     });
     const tw = text.width();
-    const x = W - tw - 40, y = H - 52; // bottom-right
+    // Place bottom-right, unless that corner already has content — then bottom-left.
+    const side = state.pageCanvas ? chooseAckSide(state.pageCanvas) : "right";
+    const x = side === "right" ? W - tw - 40 : 40;
+    const y = H - 52;
     text.position({ x, y });
     const underline = new Konva.Line({
       points: [x - 4, y + 34, x + tw + 4, y + 34], stroke: "#4f46e5", strokeWidth: 1.5, lineCap: "round",
@@ -505,15 +541,25 @@ async function exportPdf() {
       const font = await pdf.embedFont(PDFLib.StandardFonts.HelveticaBoldOblique);
       const size = 22;
       const ink = PDFLib.rgb(0.31, 0.27, 0.9);
-      pages.forEach((page) => {
+      const tw = font.widthOfTextAtSize("AK", size);
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
         const { width } = page.getSize();
-        const tw = font.widthOfTextAtSize("AK", size);
-        const x = width - tw - 40; // bottom-right
+        // Render the page to detect which bottom corner is free (don't overwrite).
+        let side = "right";
+        try {
+          const pg = await state.pdfDoc.getPage(i + 1);
+          const vp = pg.getViewport({ scale: 1 });
+          const c = document.createElement("canvas");
+          c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+          await pg.render({ canvasContext: c.getContext("2d", { willReadFrequently: true }), viewport: vp }).promise;
+          side = chooseAckSide(c);
+        } catch (_) { /* default right */ }
+        const x = side === "right" ? width - tw - 40 : 40;
         const y = 24;
         page.drawText("AK", { x, y, size, font, color: ink });
-        // A signature-like underline stroke beneath the mark.
         page.drawLine({ start: { x: x - 3, y: y - 4 }, end: { x: x + tw + 3, y: y - 4 }, thickness: 1.2, color: ink });
-      });
+      }
     }
 
     progress("Saving…", 0.95);
@@ -572,4 +618,4 @@ async function overlayPng(num) {
 }
 
 // Expose a couple of internals for E2E tests.
-window.__pdfEditor = { state, openPdf, exportPdf };
+window.__pdfEditor = { state, openPdf, exportPdf, chooseAckSide };
