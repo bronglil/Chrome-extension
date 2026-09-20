@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SnapShot Studio — Editor</title>
+  <link rel="stylesheet" href="editor.css" />
+</head>
+<body>
+  <header class="ed-topbar">
+    <div class="ed-brand">📸 <strong>SnapShot Studio</strong> <span class="ed-mode" id="mode-label"></span></div>
+    <div class="ed-actions">
+      <button class="ed-tbtn" id="btn-ocr" title="Extract text (OCR)">🔤 OCR</button>
+      <button class="ed-tbtn" id="btn-qr" title="Decode QR / barcode">🔳 QR</button>
+      <div class="ed-sep"></div>
+      <button class="ed-tbtn" id="btn-copy" title="Copy image to clipboard">📋 Copy</button>
+      <button class="ed-tbtn" id="btn-png" title="Save PNG">⬇ PNG</button>
+      <button class="ed-tbtn" id="btn-jpg" title="Save JPEG">⬇ JPG</button>
+      <button class="ed-tbtn" id="btn-pdf" title="Save PDF">⬇ PDF</button>
+      <button class="ed-tbtn" id="btn-upload" title="Upload to S3-compatible bucket">☁ Upload</button>
+    </div>
+  </header>
+
+  <div class="ed-body">
+    <!-- Left tool rail -->
+    <aside class="ed-tools" id="toolbar">
+      <button class="ed-tool active" data-tool="select" title="Select / move">🖱️</button>
+      <button class="ed-tool" data-tool="crop" title="Crop">🔲</button>
+      <button class="ed-tool" data-tool="arrow" title="Arrow">↗️</button>
+      <button class="ed-tool" data-tool="rect" title="Rectangle">▭</button>
+      <button class="ed-tool" data-tool="oval" title="Oval">⬭</button>
+      <button class="ed-tool" data-tool="line" title="Freehand">✏️</button>
+      <button class="ed-tool" data-tool="highlight" title="Highlighter">🖊️</button>
+      <button class="ed-tool" data-tool="text" title="Text">🔡</button>
+      <button class="ed-tool" data-tool="step" title="Step counter">①</button>
+      <button class="ed-tool" data-tool="spotlight" title="Spotlight">💡</button>
+      <button class="ed-tool" data-tool="blur" title="Blur / pixelate">🌫️</button>
+    </aside>
+
+    <!-- Canvas stage -->
+    <main class="ed-stage-wrap" id="stage-wrap">
+      <div id="stage"></div>
+      <div class="ed-empty" id="empty-state">
+        <p>No image loaded.</p>
+        <p class="ed-empty-sub">Capture from the toolbar popup, or drop an image here.</p>
+      </div>
+    </main>
+
+    <!-- Right properties panel -->
+    <aside class="ed-panel">
+      <section class="ed-pgroup">
+        <h3>Style</h3>
+        <label>Color <input type="color" id="prop-color" value="#ef4444" /></label>
+        <label>Stroke <input type="range" id="prop-stroke" min="1" max="30" value="4" /></label>
+        <label>Font <input type="range" id="prop-font" min="10" max="96" value="28" /></label>
+        <label>Blur px <input type="range" id="prop-blur" min="4" max="40" value="14" /></label>
+      </section>
+
+      <section class="ed-pgroup">
+        <h3>Background</h3>
+        <label>Padding <input type="range" id="prop-pad" min="0" max="160" value="0" /></label>
+        <label>Radius <input type="range" id="prop-radius" min="0" max="80" value="0" /></label>
+        <label>Shadow <input type="checkbox" id="prop-shadow" /></label>
+        <label>Fill
+          <select id="prop-bgtype">
+            <option value="none">None</option>
+            <option value="solid">Solid</option>
+            <option value="gradient">Gradient</option>
+          </select>
+        </label>
+        <label>BG color <input type="color" id="prop-bgcolor" value="#f1f5f9" /></label>
+        <label>BG color 2 <input type="color" id="prop-bgcolor2" value="#c7d2fe" /></label>
+      </section>
+
+      <section class="ed-pgroup">
+        <h3>Blur mode</h3>
+        <label><input type="radio" name="blurmode" value="pixelate" checked /> Pixelate</label>
+        <label><input type="radio" name="blurmode" value="blur" /> Gaussian</label>
+        <label><input type="checkbox" id="prop-textblur" /> Text-only blur (OCR-guided)</label>
+      </section>
+
+      <section class="ed-pgroup ed-pactions">
+        <button id="btn-crop-apply" class="ed-pbtn" disabled>Apply crop</button>
+        <button id="btn-undo" class="ed-pbtn">Undo</button>
+        <button id="btn-delete" class="ed-pbtn">Delete selected</button>
+        <button id="btn-reset-step" class="ed-pbtn">Reset step counter</button>
+      </section>
+
+      <section class="ed-pgroup" id="ocr-panel" hidden>
+        <h3>OCR result</h3>
+        <textarea id="ocr-text" rows="8" placeholder="Recognized text…"></textarea>
+        <button id="btn-ocr-copy" class="ed-pbtn">Copy text</button>
+      </section>
+
+      <section class="ed-pgroup" id="qr-panel" hidden>
+        <h3>QR / barcode</h3>
+        <div id="qr-result" class="ed-qr-result">—</div>
+        <button id="btn-qr-copy" class="ed-pbtn">Copy value</button>
+      </section>
+
+      <section class="ed-pgroup" id="upload-panel" hidden>
+        <h3>S3 upload</h3>
+        <input id="s3-url" placeholder="Presigned PUT URL" />
+        <button id="btn-upload-go" class="ed-pbtn">Upload PNG</button>
+        <div id="upload-result" class="ed-qr-result">—</div>
+      </section>
+    </aside>
+  </div>
+
+  <div class="ed-toast" id="toast" hidden></div>
+  <div class="ed-progress" id="progress" hidden><div class="ed-progress-bar" id="progress-bar"></div><span id="progress-label"></span></div>
+
+  <!-- Vendored libraries (offline). -->
+  <script src="../../vendor/konva.min.js"></script>
+  <script src="../../vendor/jspdf.umd.min.js"></script>
+  <script src="../../vendor/jsqr.min.js"></script>
+  <script src="../../vendor/tesseract/tesseract.min.js"></script>
+  <script src="../lib/utils.js"></script>
+  <script src="editor.js"></script>
+</body>
+</html>

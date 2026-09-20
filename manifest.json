@@ -1,0 +1,67 @@
+{
+  "manifest_version": 3,
+  "name": "SnapShot Studio — Screenshot & Screen Recorder",
+  "version": "1.0.0",
+  "description": "Capture visible/selected/full-page screenshots, record the screen, OCR text, decode QR codes, and annotate — all offline. Inspired by Shottr & GoFullPage.",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "SnapShot Studio",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "tabCapture",
+    "desktopCapture",
+    "offscreen",
+    "scripting",
+    "storage",
+    "downloads",
+    "clipboardWrite",
+    "commands"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self' blob:;"
+  },
+  "commands": {
+    "capture-full-page": {
+      "suggested_key": { "default": "Ctrl+Shift+E", "mac": "Command+Shift+E" },
+      "description": "Capture full page (scroll & stitch)"
+    },
+    "capture-area": {
+      "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "description": "Capture a selected area"
+    },
+    "capture-fullscreen": {
+      "description": "Capture the full screen (share picker)"
+    },
+    "toggle-recording": {
+      "description": "Start / stop screen recording"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/content/area-select.css",
+        "vendor/tesseract/*",
+        "vendor/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

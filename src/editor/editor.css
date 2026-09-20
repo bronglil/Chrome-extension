@@ -1,0 +1,96 @@
+:root {
+  --bg: #f3f4f6; --panel: #ffffff; --fg: #1f2430; --muted: #6b7280;
+  --border: #e5e7eb; --accent: #3b82f6; --accent-2: #8b5cf6; --hover: #eef2ff;
+  --stage: #d1d5db;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1116; --panel: #171a21; --fg: #e7e9ee; --muted: #9aa2b1;
+    --border: #262a33; --accent: #60a5fa; --accent-2: #a78bfa; --hover: #1f2733;
+    --stage: #0b0d12;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg); color: var(--fg); font-size: 13px;
+  display: flex; flex-direction: column;
+}
+.ed-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
+  flex-wrap: wrap; gap: 8px;
+}
+.ed-brand { font-size: 14px; }
+.ed-mode { color: var(--muted); font-size: 12px; margin-left: 6px; }
+.ed-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ed-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.ed-tbtn {
+  border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  border-radius: 7px; padding: 6px 10px; cursor: pointer; font-size: 12px;
+}
+.ed-tbtn:hover { background: var(--hover); }
+.ed-body { flex: 1; display: flex; min-height: 0; }
+.ed-tools {
+  width: 52px; background: var(--panel); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0;
+}
+.ed-tool {
+  width: 38px; height: 38px; border: 1px solid transparent; border-radius: 9px;
+  background: none; cursor: pointer; font-size: 17px;
+}
+.ed-tool:hover { background: var(--hover); }
+.ed-tool.active { background: var(--hover); border-color: var(--accent); }
+.ed-stage-wrap {
+  flex: 1; overflow: auto; background: var(--stage);
+  display: flex; align-items: flex-start; justify-content: center; padding: 24px;
+  position: relative;
+}
+#stage { box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+.ed-empty {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  text-align: center; color: var(--muted);
+}
+.ed-empty-sub { font-size: 12px; }
+.ed-panel {
+  width: 230px; background: var(--panel); border-left: 1px solid var(--border);
+  overflow-y: auto; padding: 10px;
+}
+.ed-pgroup { margin-bottom: 16px; }
+.ed-pgroup h3 {
+  margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--muted);
+}
+.ed-pgroup label {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 7px; font-size: 12px;
+}
+.ed-pgroup input[type="range"] { width: 110px; }
+.ed-pgroup input[type="text"], .ed-pgroup input:not([type]), .ed-pgroup select,
+.ed-pgroup textarea, #s3-url {
+  width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--fg); font-size: 12px;
+}
+.ed-pactions { display: flex; flex-direction: column; gap: 6px; }
+.ed-pbtn {
+  border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  border-radius: 7px; padding: 7px; cursor: pointer; font-size: 12px; width: 100%;
+}
+.ed-pbtn:hover:not(:disabled) { background: var(--hover); }
+.ed-pbtn:disabled { opacity: .5; cursor: not-allowed; }
+.ed-qr-result { word-break: break-all; font-size: 12px; margin: 6px 0; color: var(--muted); }
+.ed-toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  background: var(--fg); color: var(--bg); padding: 9px 14px; border-radius: 8px;
+  font-size: 12px; z-index: 50;
+}
+.ed-progress {
+  position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; width: 260px; z-index: 50; font-size: 12px;
+}
+.ed-progress-bar {
+  height: 6px; background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border-radius: 3px; width: 0%; margin-bottom: 6px; transition: width .2s;
+}

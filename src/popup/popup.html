@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SnapShot Studio</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="pp-header">
+    <div class="pp-logo">📸</div>
+    <div>
+      <h1>SnapShot Studio</h1>
+      <p class="pp-sub">Capture · Record · Annotate</p>
+    </div>
+  </header>
+
+  <!-- Web-page capture (no share picker) -->
+  <section class="pp-group">
+    <h2 class="pp-group-title">Web page</h2>
+    <div class="pp-grid">
+      <button class="pp-btn" data-action="capture-visible" title="Grab the visible part of the tab">
+        <span class="pp-ico">🖼️</span><span>Visible area</span>
+      </button>
+      <button class="pp-btn" data-action="capture-area" title="Draw a rectangle to capture">
+        <span class="pp-ico">✂️</span><span>Select area</span>
+      </button>
+      <button class="pp-btn" data-action="capture-full-page" title="Scroll & stitch the whole page">
+        <span class="pp-ico">📜</span><span>Full page</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Desktop capture (share picker shown) -->
+  <section class="pp-group">
+    <h2 class="pp-group-title">Desktop <span class="pp-hint">(share picker shown)</span></h2>
+    <div class="pp-grid">
+      <button class="pp-btn" data-action="capture-fullscreen" title="Pick a screen to capture">
+        <span class="pp-ico">🖥️</span><span>Full screen</span>
+      </button>
+      <button class="pp-btn" data-action="capture-window" title="Pick a window to capture">
+        <span class="pp-ico">🗔</span><span>Active window</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Delay -->
+  <section class="pp-group">
+    <h2 class="pp-group-title">Delayed shot</h2>
+    <div class="pp-grid pp-grid-3">
+      <button class="pp-btn pp-btn-sm" data-action="capture-visible" data-delay="3">3s</button>
+      <button class="pp-btn pp-btn-sm" data-action="capture-visible" data-delay="5">5s</button>
+      <button class="pp-btn pp-btn-sm" data-action="capture-visible" data-delay="10">10s</button>
+    </div>
+  </section>
+
+  <!-- Recording -->
+  <section class="pp-group">
+    <h2 class="pp-group-title">Screen recording</h2>
+    <div class="pp-rec-opts">
+      <label><input type="checkbox" id="rec-mic" /> Microphone</label>
+      <label><input type="checkbox" id="rec-audio" checked /> Tab / system audio</label>
+    </div>
+    <div class="pp-grid">
+      <button class="pp-btn pp-btn-rec" id="rec-toggle" data-action="toggle-recording">
+        <span class="pp-ico" id="rec-ico">⏺️</span><span id="rec-label">Start recording</span>
+      </button>
+    </div>
+    <div class="pp-rec-status" id="rec-status" hidden>
+      <span class="pp-rec-dot"></span> Recording… <span id="rec-time">00:00</span>
+    </div>
+  </section>
+
+  <footer class="pp-footer">
+    <button class="pp-link" id="open-editor">Open blank editor</button>
+    <span class="pp-ver">v1.0.0</span>
+  </footer>
+
+  <div class="pp-toast" id="toast" hidden></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
