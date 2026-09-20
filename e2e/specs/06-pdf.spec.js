@@ -101,6 +101,22 @@ test.describe("PDF editor", () => {
     await expect.poll(() => overlayCount(page, ".sig")).toBe(1);
   });
 
+  test("Acknowledge stamps an AK mark and persists across pages", async ({ context, extensionId }) => {
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+    await page.click("#pe-ack");
+    await expect(page.locator("#pe-ack")).toHaveClass(/is-active/);
+    // On-screen AK badge is drawn on the dedicated ack layer.
+    await expect.poll(() => page.evaluate(
+      () => window.__pdfEditor.state.ackLayer.getChildren().length
+    )).toBeGreaterThan(0);
+    // It re-appears on the next page too.
+    await page.click("#pe-next");
+    await expect.poll(() => page.evaluate(
+      () => window.__pdfEditor.state.ackLayer.getChildren().length
+    )).toBeGreaterThan(0);
+  });
+
   test("exports a signed PDF larger than the original", async ({ context, extensionId }) => {
     const page = await openPdfEditor(context, extensionId);
     await loadSample(page);
