@@ -1,214 +1,152 @@
-# 📸 SnapShot Studio — Screenshot & Screen Recorder (Chrome MV3)
+# SnapShot Studio
 
-A cross-platform (Windows + macOS + Linux) Chrome extension for screenshots,
-full-page capture, screen recording, OCR, QR decoding and annotation — inspired
-by **Shottr** and **GoFullPage**. It is cross-platform automatically: Chrome is
-the runtime, so there is **no native code**.
+A Manifest V3 Chrome extension for **screenshots, screen recording, OCR, QR
+decoding, annotation, and PDF signing** — inspired by Shottr and GoFullPage.
 
-Everything runs **fully offline** — OCR (Tesseract.js WASM), QR decode and PDF
-export are all vendored locally under `vendor/`.
-
----
-
-## ✨ Features
-
-### Capture
-| Mode | How | Picker? |
-|------|-----|---------|
-| Visible area | `chrome.tabs.captureVisibleTab` | No |
-| Selected area | In-page drag overlay → crop | No |
-| Full page | Scroll & stitch onto one tall canvas | No |
-| Full screen | `chrome.desktopCapture` → frame grab | Yes (Chrome privacy rule) |
-| Active window | `chrome.desktopCapture(['window'])` → frame | Yes |
-| Delayed shot | 3 / 5 / 10 s timer, then capture | — |
-
-### Recording
-- Screen recording via `getUserMedia`(desktop stream) → **MediaRecorder** in the
-  offscreen document → **WebM** blob, saved to Downloads.
-- Optional **microphone** and **tab/system audio**.
-- Start/stop from the popup or the keyboard shortcut. A red badge shows while recording.
-
-### Editor (opens in a full browser tab, Konva.js canvas)
-- **Crop** & resize.
-- **Annotate:** arrow, rectangle, oval, freehand, highlighter, text, step counter,
-  spotlight, and **blur/pixelate** (including an OCR-guided **text-only blur** mode).
-- **Backgrounds:** solid/gradient fill, drop shadow, rounded corners, padding.
-
-### OCR & QR
-- **OCR** via Tesseract.js (WASM, offline) — extract text from the capture and copy
-  it to the clipboard.
-- **QR/barcode** decode via the native `BarcodeDetector` API, falling back to **jsQR**.
-
-### PDF editor & signing
-Open the **Sign / edit PDF** tool from the popup (or drop a `.pdf` onto it):
-- Renders pages with **pdf.js**; navigate multi-page documents.
-- **Add a signature** to a specific spot — draw it, type it (cursive), or upload an
-  image — then drag and resize it exactly where you want it.
-- Also add **text**, **freehand** marks, and a **date stamp**; signatures/marks are
-  kept per page.
-- **Save** with **pdf-lib**: annotations are overlaid onto the *original* pages
-  (the underlying text stays intact — it is not a flattened re-render), exported as
-  `<name>-signed.pdf`.
-
-### Export
-- **PNG** and **JPEG**.
-- **PDF** via jsPDF — long/full-page images are split across multiple pages.
-- **Copy to clipboard** and **Save to Downloads**.
-- Optional **upload** to an S3-compatible bucket (paste a presigned PUT URL) — the
-  resulting link is copied to your clipboard.
+Cross-platform by design (Windows / macOS / Linux): Chrome is the runtime, so
+there is **no native code**. Everything runs **fully offline** — OCR, QR, and
+all PDF work use libraries vendored under `vendor/`.
 
 ---
 
-## 🧩 Architecture (Manifest V3)
+## Features
+
+**Capture**
+- Visible tab, drag-to-select area, and full-page scroll-and-stitch — no share
+  picker (`chrome.tabs.captureVisibleTab`).
+- Full screen and active window via `chrome.desktopCapture` (Chrome's share
+  picker is shown — a privacy rule that cannot be bypassed).
+- Delayed shot: 3 / 5 / 10 s.
+
+**Record**
+- Screen recording → WebM, with optional microphone and tab/system audio.
+- Start/stop from the popup or a keyboard shortcut; a red badge shows while live.
+
+**Editor** (Konva canvas, opens in a tab)
+- Crop, and annotate: arrow, rectangle, oval, freehand, highlighter, text, step
+  counter, spotlight, and blur/pixelate (incl. OCR-guided text-only blur).
+- Backgrounds: solid/gradient fill, drop shadow, rounded corners, padding.
+- Export PNG / JPEG / multi-page PDF, copy to clipboard, optional S3 upload.
+
+**OCR & QR** (offline)
+- Text extraction via Tesseract.js (WASM); QR/barcode via `BarcodeDetector`
+  with a jsQR fallback.
+
+**PDF editor & signing**
+- Open a PDF (or drop one in), navigate pages, and add a **signature** to any
+  spot — draw it, type it, or upload an image, then drag and resize.
+- **Pen** and **highlighter** for marking up while you read, plus text and a
+  date stamp; marks are kept per page.
+- Save with pdf-lib: annotations overlay the **original** pages (underlying text
+  is preserved, not flattened), exported as `<name>-signed.pdf`.
+
+---
+
+## Install (load unpacked)
+
+1. Open `chrome://extensions` and enable **Developer mode**.
+2. Click **Load unpacked** and select this folder (the one with `manifest.json`).
+3. Pin **SnapShot Studio** and open it from the toolbar.
+
+No build step — plain JavaScript. Requires **Chrome 116+** (offscreen documents).
+
+## Keyboard shortcuts
+
+| Action | Windows / Linux | macOS |
+|---|---|---|
+| Full-page capture | `Ctrl+Shift+E` | `⌘+Shift+E` |
+| Area capture | `Ctrl+Shift+S` | `⌘+Shift+S` |
+| Full-screen capture / Start–stop recording | set at `chrome://extensions/shortcuts` | |
+
+Shortcuts fire only while Chrome is focused — they are not system-wide.
+
+---
+
+## Architecture (MV3)
 
 ```
 manifest.json
 src/
-  lib/            Shared, dependency-free utilities (throttle, rAF-debounce,
-                  image/blob helpers, and a device profiler) reused by every
-                  context — popup, content, offscreen and editor
-  popup/          Toolbar UI — one button per capture mode
-  background/     Service worker: routing, shortcuts, delay timers,
-                  creates the offscreen document, supplies stream IDs
-  offscreen/      ALL media work: getUserMedia frame grabs, MediaRecorder
-                  (MV3 service workers can't touch the DOM or media)
-  content/        In-page area-selection overlay + full-page scroll & stitch
-  editor/         Konva canvas editor: crop, annotate, OCR, QR, export
-  pdf/            PDF editor: open, sign, annotate, save (pdf.js + pdf-lib)
-vendor/           konva, jspdf, jsqr, tesseract, pdfjs, pdf-lib
-icons/
-test/             Unit tests for src/lib/utils.js (Node built-in runner)
-e2e/              Playwright end-to-end tests (real extension in Chromium)
+  lib/        Shared, dependency-free utilities + a device profiler
+  popup/      Toolbar UI
+  background/ Service worker: routing, shortcuts, timers, offscreen, stream IDs
+  offscreen/  Media work: getUserMedia frame grabs + MediaRecorder
+  content/    In-page area overlay + full-page scroll & stitch
+  editor/     Konva editor: crop, annotate, OCR, QR, export
+  pdf/        PDF editor: open, sign, pen/highlight, save (pdf.js + pdf-lib)
+vendor/       konva, jspdf, jsqr, tesseract, pdfjs, pdf-lib (all offline)
+test/         Unit tests (Node built-in runner)
+e2e/          Playwright end-to-end tests (real extension in Chromium)
 ```
 
-**Message flow:** popup / shortcut → service worker → (content script *or*
-offscreen document) → capture → stashed in `chrome.storage.local` → editor tab.
+**Performance across devices:** `deviceProfile()` (in `src/lib/utils.js`) reads
+`hardwareConcurrency`, `deviceMemory`, and Save-Data to adapt work — capped
+stitch height and pixel ratio on low-power devices, adaptive scroll pacing,
+single-threaded OCR, and rAF-coalesced editor redraws.
+
+**Constraints handled:** desktop-capture picker is mandatory;
+`captureVisibleTab` rate limit (~2/s) is spaced between full-page slices;
+fixed/sticky headers are hidden after the first slice; lazy images get a pause
+per scroll step; full-page height is capped under the ~32,767 px canvas limit;
+recording output is WebM (MP4 would need ffmpeg.wasm); DRM content can't be
+captured.
 
 ---
 
-## 🚀 Install (Load unpacked)
-
-1. Open **`chrome://extensions`**.
-2. Enable **Developer mode** (top-right).
-3. Click **Load unpacked** and select this folder (the one containing
-   `manifest.json`).
-4. Pin **SnapShot Studio** to the toolbar and click it.
-
-No build step is required — this is plain JavaScript. (If you fork it to
-TypeScript, use Vite; keep dependencies minimal.)
-
-Requires **Chrome 116+** (offscreen documents + `chrome.runtime.getContexts`).
-
----
-
-## ⌨️ Keyboard shortcuts (`chrome.commands`)
-
-| Action | Default (Win/Linux) | macOS |
-|--------|--------------------|-------|
-| Full-page capture | `Ctrl+Shift+E` | `⌘+Shift+E` |
-| Area capture | `Ctrl+Shift+S` | `⌘+Shift+S` |
-| Full-screen capture | *(set in `chrome://extensions/shortcuts`)* | |
-| Start/stop recording | *(set in `chrome://extensions/shortcuts`)* | |
-
-> Shortcuts only fire while **Chrome is the focused app** — they are not
-> system-wide. Rebind them at `chrome://extensions/shortcuts`.
-
----
-
-## 📖 Usage
-
-- **Web-page shots** (visible / area / full page) never show a share picker.
-- **Desktop shots** (full screen / active window / recording) always show
-  Chrome's *"choose what to share"* picker — this is a browser privacy rule and
-  **cannot be bypassed**.
-- After a capture the **editor tab** opens. Annotate, then export via the top bar
-  (Copy / PNG / JPG / PDF / Upload) or run **OCR** / **QR**.
-- The blank editor also accepts **drag-and-dropped images**.
-
----
-
-## ⚠️ Constraints handled
-
-- **Share picker** is mandatory for screen/window capture (privacy); only tab
-  capture can skip it after a user gesture.
-- **`captureVisibleTab` rate limit** (~2 calls/sec): the full-page routine adds a
-  delay between slices so captures don't fail silently.
-- **Fixed/sticky headers** are hidden after the first full-page slice, then
-  restored, to avoid duplicated banners.
-- **Lazy-loaded images**: the scroller pauses after each step so images load.
-- **Max canvas ~32,767px**: full-page height is capped under that limit.
-- **Recording output is WebM** — MP4 would need `ffmpeg.wasm` transcoding (left
-  out on purpose).
-- **DRM-protected content cannot be captured** (browser restriction).
-
-### Performance across devices
-
-A shared **device profiler** (`src/lib/utils.js` → `deviceProfile()`) reads
-`hardwareConcurrency`, `deviceMemory` and the Network Information API to adapt
-work to the machine:
-
-- **Low-power devices** (≤2 cores/GB or Save-Data/2G) get longer full-page
-  scroll settle times and a lower stitched-canvas cap (16k vs 32k px).
-- Raster **pixel ratio is capped** (1× on low-power, 2× otherwise) so 3–4×
-  displays don't exhaust memory.
-- Slider-driven **background relayout is coalesced to one redraw per animation
-  frame** (`rafDebounce`) for smooth editing everywhere.
-- OCR runs single-threaded on constrained devices.
-
----
-
-## ✅ Tests
-
-Two layers, both fully automated:
+## Development
 
 ```bash
-npm test        # unit tests  (Node built-in runner, no browser)
-npm run test:e2e   # end-to-end (real extension in Chromium via Playwright)
-npm run test:all   # both
+npm ci
+
+npm test          # unit tests (no browser)
+npm run test:e2e  # end-to-end (real extension in Chromium, headed under Xvfb)
+npm run test:all  # both
 ```
 
-### Unit tests — `test/` (20 tests)
-Cover the reusable core in `src/lib/utils.js`: `clampRect`, `throttle`,
-`rafDebounce`, `sleep`, `loadImage`, `blobToDataUrl` and the device-adaptive
-`deviceProfile()` (high-end vs 2-core vs Save-Data/2G, and missing-hint
-fallbacks). Browser globals are stubbed in `test/env.js` via an isolated VM
-sandbox. No dependencies to install.
+Local checkout, e.g. under `~/Documents/GitHub`:
 
-### End-to-end tests — `e2e/` (19 tests, Playwright)
-Load the **real unpacked extension** into Chromium and drive it:
+```bash
+cd ~/Documents/GitHub
+git clone https://github.com/bronglil/Chrome-extension.git
+cd Chrome-extension
+npm ci
+```
 
-| Spec | Covers |
-|------|--------|
-| `00-smoke` | Extension loads, service worker registers |
-| `01-popup` | Every capture-mode button + recording controls render |
-| `02-editor-annotate` | Konva stage, rectangle/arrow/oval/step tools, undo, gradient+padding background |
-| `03-export` | PNG / JPEG / clipboard / multi-page PDF export |
-| `04-capture` | `captureVisibleTab`, **full-page scroll-and-stitch**, area-selection drag (real content script on a served page) |
-| `05-ocr-qr` | Offline **Tesseract OCR** extracts text; **QR decode** returns the value |
-| `06-pdf` | Open a PDF, page navigation, place a typed **signature**, persistence across pages, **export a signed PDF** (valid header, grows vs. original) |
+### Tests
 
-E2E notes:
-- MV3 extensions only load in **headed** Chromium, so `test:e2e` runs under
-  **Xvfb** (`xvfb-run`). The fixture points at the pre-installed Chromium via
-  `CHROMIUM_PATH` (defaults to the container path; override with the env var).
-- Desktop-picker flows (`getDisplayMedia` / `desktopCapture`) can't be scripted
-  headlessly — the picker is a browser privacy control — so those paths are
-  driven through the pieces that don't need a picker (tab capture, editor,
-  OCR/QR), which exercise the same logic.
+- **Unit — `test/` (20):** the reusable core in `src/lib/utils.js` — `clampRect`,
+  `throttle`, `rafDebounce`, `loadImage`, `blobToDataUrl`, and `deviceProfile()`.
+- **E2E — `e2e/` (26, Playwright):** load the real unpacked extension and drive
+  it — popup, editor annotations/export, `captureVisibleTab`, full-page
+  scroll-and-stitch, area select, offline OCR & QR, and the PDF editor
+  (open, page nav, pen, highlighter, signature, signed-PDF export).
 
-> These E2E tests caught two real load-time bugs during development: a
-> `worker-src blob:` CSP directive that hung the entire extension load, and
-> missing Tesseract LSTM core files that broke OCR. Both are fixed.
+> MV3 extensions load only in **headed** Chromium, so E2E runs under **Xvfb**.
+> The fixture picks the pre-installed browser, or Playwright's own if none —
+> override with `CHROMIUM_PATH`. Desktop-picker flows can't be scripted (browser
+> privacy control) and are validated manually.
 
-## 🛠️ Tech stack
+### CI & versioning
 
-Manifest V3 · vanilla JS (no build step) · **Konva.js** (editor canvas) ·
-**Tesseract.js** (offline OCR) · **jsPDF** (PDF export) · **jsQR** +
-`BarcodeDetector` (codes) · **pdf.js** + **pdf-lib** (PDF viewing & signing).
-All vendored in `vendor/` for offline use.
+- **CI** (`.github/workflows/ci.yml`) runs on every push and PR: unit tests, a
+  version-sync check, then the full E2E suite on Chromium under Xvfb.
+- **Release** (`.github/workflows/release.yml`): when the version changes on
+  `master`, it tags `vX.Y.Z` and publishes a GitHub Release with a zipped
+  unpacked extension.
+- `package.json` and `manifest.json` versions are kept in lock-step —
+  `npm version <patch|minor|major>` bumps both (`npm run version:check` /
+  `version:sync` verify or sync them).
 
-## 📦 Third-party licenses
+---
 
-Konva (MIT), jsPDF (MIT), jsQR (Apache-2.0), Tesseract.js (Apache-2.0) and the
-`eng` trained data (Apache-2.0) are redistributed under their respective
-licenses in `vendor/`.
+## Tech stack
+
+Manifest V3 · vanilla JS (no build step) · Konva.js (canvas) · Tesseract.js
+(OCR) · jsPDF (PDF export) · jsQR + `BarcodeDetector` (codes) · pdf.js + pdf-lib
+(PDF signing). All vendored for offline use.
+
+## Third-party licenses
+
+Konva (MIT), jsPDF (MIT), jsQR (Apache-2.0), Tesseract.js (Apache-2.0) and its
+`eng` data (Apache-2.0), pdf.js (Apache-2.0), pdf-lib (MIT) are redistributed
+under their respective licenses in `vendor/`.

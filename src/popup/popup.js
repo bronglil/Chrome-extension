@@ -29,7 +29,7 @@ async function refreshRecordingUI() {
 function setRecordingUI(active) {
   const btn = $("#rec-toggle");
   $("#rec-label").textContent = active ? "Stop recording" : "Start recording";
-  $("#rec-ico").textContent = active ? "⏹️" : "⏺️";
+  // The dot's shape (circle vs. square) is driven by the .recording CSS class.
   btn.classList.toggle("recording", active);
   $("#rec-status").hidden = !active;
 }

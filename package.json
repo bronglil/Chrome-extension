@@ -6,7 +6,10 @@
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
     "test:e2e": "xvfb-run -a playwright test -c e2e/playwright.config.js",
-    "test:all": "npm test && npm run test:e2e"
+    "test:all": "npm test && npm run test:e2e",
+    "version:check": "node scripts/check-version.js",
+    "version:sync": "node scripts/sync-version.js",
+    "version": "node scripts/sync-version.js && git add manifest.json"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

@@ -1,0 +1,65 @@
+name: Release
+
+# When the version in package.json changes on master, tag it and publish a
+# GitHub Release with a loadable (zipped) unpacked extension attached.
+on:
+  push:
+    branches: [master]
+    paths:
+      - package.json
+      - manifest.json
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify manifest/package versions match
+        run: node scripts/check-version.js
+
+      - name: Read version
+        id: v
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if tag already exists
+        id: check
+        run: |
+          if git rev-parse "v${{ steps.v.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build extension zip
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          mkdir -p dist
+          zip -r "dist/snapshot-studio-v${{ steps.v.outputs.version }}.zip" \
+            manifest.json src vendor icons README.md \
+            -x '*.map'
+
+      - name: Create tag and release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ steps.v.outputs.version }}"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+          gh release create "$VERSION" \
+            "dist/snapshot-studio-${VERSION}.zip" \
+            --title "$VERSION" \
+            --generate-notes

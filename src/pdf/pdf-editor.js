@@ -51,6 +51,7 @@ function hideProgress() { $("#pe-progress").hidden = true; }
 
 const prop = {
   color: () => $("#pe-color").value,
+  highlight: () => $("#pe-highlight")?.value || "#ffd43b",
   stroke: () => +$("#pe-stroke").value,
   font: () => +$("#pe-font").value,
 };
@@ -67,7 +68,9 @@ async function openPdf(arrayBuffer, name) {
   state.pageNum = 1;
   state.pageOverlays = {};
   state.pageSizes = {};
-  $("#pe-file").textContent = state.fileName;
+  const chip = $("#pe-file");
+  chip.textContent = state.fileName;
+  chip.hidden = false;
   $("#pe-empty").hidden = true;
   $("#pe-save").disabled = false;
   await renderPage(1);
@@ -180,10 +183,10 @@ $("#pe-next").addEventListener("click", async () => {
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
-document.querySelectorAll(".pe-tool[data-tool]").forEach((btn) => {
+document.querySelectorAll(".rail__tool[data-tool]").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".pe-tool[data-tool]").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
+    document.querySelectorAll(".rail__tool[data-tool]").forEach((b) => b.classList.remove("is-active"));
+    btn.classList.add("is-active");
     state.tool = btn.dataset.tool;
     if (state.transformer) state.transformer.nodes([]);
     if (state.stage) state.stage.container().style.cursor = state.tool === "select" ? "default" : "crosshair";
@@ -214,7 +217,7 @@ function bindStage() {
           e.target.getLayer() === state.baseLayer) state.transformer.nodes([]);
       return;
     }
-    if (state.tool === "draw") startDraw();
+    if (state.tool === "pen" || state.tool === "highlight") startDraw();
   });
   stage.on("mousemove touchmove", () => { if (state.drawing) extendDraw(); });
   stage.on("mouseup touchend", () => { if (state.drawing) { state.drawing.node.draggable(true); state.drawing = null; } });
@@ -237,12 +240,21 @@ function bindStage() {
 
 function pointer() { return state.stage.getPointerPosition(); }
 
-// ---- Freehand draw ---------------------------------------------------------
+// ---- Pen & highlighter -----------------------------------------------------
 function startDraw() {
   const p = pointer();
+  const isHi = state.tool === "highlight";
   const node = new Konva.Line({
-    points: [p.x, p.y], stroke: prop.color(), strokeWidth: prop.stroke(),
-    lineCap: "round", lineJoin: "round", tension: 0.4,
+    points: [p.x, p.y],
+    stroke: isHi ? prop.highlight() : prop.color(),
+    strokeWidth: isHi ? Math.max(12, prop.stroke() * 5) : prop.stroke(),
+    lineCap: "round",
+    lineJoin: "round",
+    tension: isHi ? 0 : 0.4,
+    opacity: isHi ? 0.4 : 1,
+    // Multiply keeps the underlying PDF text readable through the highlight.
+    globalCompositeOperation: isHi ? "multiply" : "source-over",
+    name: isHi ? "highlight" : "pen",
   });
   state.overlayLayer.add(node);
   state.drawing = { node };
@@ -291,8 +303,28 @@ function stampDate() {
   selectTool("select");
 }
 function selectTool(t) {
-  document.querySelector(`.pe-tool[data-tool="${t}"]`).click();
+  document.querySelector(`.rail__tool[data-tool="${t}"]`).click();
 }
+
+// Colour swatches (ink + highlighter) drive the hidden <input type=color>.
+function wireSwatches(containerSel, inputSel, attr) {
+  const box = document.querySelector(containerSel);
+  if (!box) return;
+  box.querySelectorAll(".swatch[" + attr + "]").forEach((sw) => {
+    sw.addEventListener("click", () => {
+      box.querySelectorAll(".swatch").forEach((s) => s.classList.remove("is-active"));
+      sw.classList.add("is-active");
+      $(inputSel).value = sw.getAttribute(attr);
+    });
+  });
+  // A custom-colour pick clears preset highlight and marks the custom chip active.
+  $(inputSel).addEventListener("input", () => {
+    box.querySelectorAll(".swatch").forEach((s) => s.classList.remove("is-active"));
+    box.querySelector(".swatch--custom")?.classList.add("is-active");
+  });
+}
+wireSwatches("#pe-color-swatches", "#pe-color", "data-color");
+wireSwatches("#pe-hl-swatches", "#pe-highlight", "data-hl");
 
 // ---------------------------------------------------------------------------
 // Signature modal (draw / type / upload) -> transparent PNG data URL
@@ -307,11 +339,11 @@ function openSigModal() {
 function closeSigModal() { $("#pe-sig-modal").hidden = true; }
 $("#pe-sig-cancel").addEventListener("click", closeSigModal);
 
-document.querySelectorAll(".pe-sig-tab").forEach((t) =>
+document.querySelectorAll(".seg__btn").forEach((t) =>
   t.addEventListener("click", () => setSigTab(t.dataset.sig)));
 function setSigTab(name) {
-  document.querySelectorAll(".pe-sig-tab").forEach((t) => t.classList.toggle("active", t.dataset.sig === name));
-  document.querySelectorAll(".pe-sig-pane").forEach((p) => (p.hidden = p.dataset.pane !== name));
+  document.querySelectorAll(".seg__btn").forEach((t) => t.classList.toggle("is-active", t.dataset.sig === name));
+  document.querySelectorAll(".sig-pane").forEach((p) => (p.hidden = p.dataset.pane !== name));
 }
 
 // Draw pad
@@ -349,7 +381,7 @@ $("#pe-sig-file").addEventListener("change", async (e) => {
 
 // Produce the signature image for the active tab.
 async function buildSignature() {
-  const active = document.querySelector(".pe-sig-tab.active").dataset.sig;
+  const active = document.querySelector(".seg__btn.is-active").dataset.sig;
   if (active === "draw") {
     if (!padHasInk) return null;
     return pad.toDataURL("image/png");

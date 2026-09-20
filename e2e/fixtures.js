@@ -9,13 +9,20 @@
 //    a picker (tab capture, the editor, OCR/QR), which cover the real logic.
 const base = require("@playwright/test");
 const path = require("node:path");
+const fs = require("node:fs");
 
 const EXT_ROOT = path.join(__dirname, ".."); // folder containing manifest.json
 
-// Use the pre-installed full Chromium (extensions need full Chrome, not the
-// headless-shell). Overridable via CHROMIUM_PATH if the image changes.
-const CHROMIUM_PATH =
-  process.env.CHROMIUM_PATH || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
+// Extensions need full Chromium (not headless-shell). Prefer an explicit
+// CHROMIUM_PATH, then the pre-installed container browser, else let Playwright
+// use its own installed chromium (CI runs `playwright install chromium`).
+function resolveChromium() {
+  if (process.env.CHROMIUM_PATH) return process.env.CHROMIUM_PATH;
+  const bundled = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
+  if (fs.existsSync(bundled)) return bundled;
+  return undefined; // Playwright resolves its own executable
+}
+const CHROMIUM_PATH = resolveChromium();
 
 const test = base.test.extend({
   context: async ({}, use) => {

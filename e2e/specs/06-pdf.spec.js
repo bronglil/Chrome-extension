@@ -38,12 +38,44 @@ test.describe("PDF editor", () => {
     await expect(page.locator("#pe-pageinfo")).toHaveText("1 / 2");
   });
 
+  test("highlighter draws a highlight stroke on the page", async ({ context, extensionId }) => {
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+    await page.click('.rail__tool[data-tool="highlight"]');
+    const box = await page.locator("#pe-stage").boundingBox();
+    // Drag across a line of text.
+    await page.mouse.move(box.x + 60, box.y + 80);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 260, box.y + 80);
+    await page.mouse.move(box.x + 360, box.y + 80);
+    await page.mouse.up();
+    expect(await overlayCount(page, ".highlight")).toBe(1);
+    // Highlight uses multiply blending so underlying text stays readable.
+    const gco = await page.evaluate(
+      () => window.__pdfEditor.state.overlayLayer.findOne(".highlight").globalCompositeOperation()
+    );
+    expect(gco).toBe("multiply");
+  });
+
+  test("pen draws a freehand stroke", async ({ context, extensionId }) => {
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+    await page.click('.rail__tool[data-tool="pen"]');
+    const box = await page.locator("#pe-stage").boundingBox();
+    await page.mouse.move(box.x + 80, box.y + 120);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 140, box.y + 150);
+    await page.mouse.move(box.x + 200, box.y + 130);
+    await page.mouse.up();
+    expect(await overlayCount(page, ".pen")).toBe(1);
+  });
+
   test("places a typed signature onto the page", async ({ context, extensionId }) => {
     const page = await openPdfEditor(context, extensionId);
     await loadSample(page);
-    await page.click('.pe-tool[data-tool="sign"]');
+    await page.click('.rail__tool[data-tool="sign"]');
     await expect(page.locator("#pe-sig-modal")).toBeVisible();
-    await page.click('.pe-sig-tab[data-sig="type"]');
+    await page.click('.seg__btn[data-sig="type"]');
     await page.fill("#pe-sig-text", "Sajid");
     await page.click("#pe-sig-add");
     // Signature becomes a named Konva image on the overlay.
@@ -56,8 +88,8 @@ test.describe("PDF editor", () => {
     const page = await openPdfEditor(context, extensionId);
     await loadSample(page);
     // Add a signature on page 1.
-    await page.click('.pe-tool[data-tool="sign"]');
-    await page.click('.pe-sig-tab[data-sig="type"]');
+    await page.click('.rail__tool[data-tool="sign"]');
+    await page.click('.seg__btn[data-sig="type"]');
     await page.fill("#pe-sig-text", "Sajid");
     await page.click("#pe-sig-add");
     await expect.poll(() => overlayCount(page, ".sig")).toBe(1);
@@ -71,8 +103,8 @@ test.describe("PDF editor", () => {
   test("exports a signed PDF larger than the original", async ({ context, extensionId }) => {
     const page = await openPdfEditor(context, extensionId);
     await loadSample(page);
-    await page.click('.pe-tool[data-tool="sign"]');
-    await page.click('.pe-sig-tab[data-sig="type"]');
+    await page.click('.rail__tool[data-tool="sign"]');
+    await page.click('.seg__btn[data-sig="type"]');
     await page.fill("#pe-sig-text", "Sajid");
     await page.click("#pe-sig-add");
     await expect.poll(() => overlayCount(page, ".sig")).toBe(1);
