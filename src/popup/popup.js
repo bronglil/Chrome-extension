@@ -17,6 +17,33 @@ function send(message) {
   return chrome.runtime.sendMessage(message);
 }
 
+// Persist the job before the popup closes. sendMessage from a dying popup
+// is often dropped in MV3; session storage always wakes the worker.
+async function queueJob(job) {
+  try {
+    await chrome.storage.session.set({ pendingJob: { ...job, at: Date.now() } });
+  } catch (_) {
+    if (job.type === "RECORD") {
+      await send({ type: "TOGGLE_RECORDING", options: job.options || {} });
+    } else {
+      const res = await send({ type: "CAPTURE", action: job.action, delayMs: job.delayMs });
+      if (res?.error) throw new Error(res.error);
+    }
+  }
+}
+
+// Host access is in the manifest, but Chrome may still prompt (or leave it
+// off after an unpacked/CDP load). Must run in this click handler.
+async function ensureSiteAccess() {
+  try {
+    const have = await chrome.permissions.contains({ origins: ["<all_urls>"] });
+    if (have) return true;
+    return await chrome.permissions.request({ origins: ["<all_urls>"] });
+  } catch (_) {
+    return false;
+  }
+}
+
 async function refreshRecordingUI() {
   try {
     const state = await send({ type: "GET_RECORDING_STATE" });
@@ -39,30 +66,35 @@ document.querySelectorAll("[data-action]").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const action = btn.dataset.action;
     const delay = parseInt(btn.dataset.delay || "0", 10);
+    if (!(await ensureSiteAccess())) {
+      return toast("⚠️ Allow site access to capture pages.");
+    }
 
     if (action === "toggle-recording") {
       const opts = {
+        camera: $("#rec-cam").checked,
         mic: $("#rec-mic").checked,
         systemAudio: $("#rec-audio").checked,
       };
-      const res = await send({ type: "TOGGLE_RECORDING", options: opts });
-      if (res?.error) return toast("⚠️ " + res.error);
-      setRecordingUI(!!res?.recording);
-      if (!res?.recording) window.close();
-      return;
-    }
-
-    if (delay) {
-      toast(`Capturing in ${delay}s…`);
-      await send({ type: "CAPTURE", action, delayMs: delay * 1000 });
+      persistRecPrefs(opts);
+      const need = [];
+      if (opts.camera) need.push("camera");
+      if (opts.mic) need.push("microphone");
+      if (need.length) {
+        try { await chrome.permissions.request({ permissions: need }); } catch (_) { /* optional */ }
+      }
+      await queueJob({ type: "RECORD", options: opts });
       window.close();
       return;
     }
 
-    const res = await send({ type: "CAPTURE", action });
-    if (res?.error) return toast("⚠️ " + res.error);
-    // Most captures open a new editor tab; close popup so the picker/overlay is usable.
-    window.close();
+    try {
+      if (delay) toast(`Capturing in ${delay}s…`);
+      await queueJob({ type: "CAPTURE", action, delayMs: delay ? delay * 1000 : 0 });
+      window.close();
+    } catch (err) {
+      toast("⚠️ " + (err.message || String(err)));
+    }
   });
 });
 
@@ -103,20 +135,37 @@ function renderPageQR(url) {
 
   qrState = { url, dataUrl };
   $("#qr-img").src = dataUrl;
-  const u = $("#qr-url");
-  u.textContent = url;
-  u.title = url;
 }
 // Exposed for E2E (the real popup gets the URL from chrome.tabs).
 window.__snapRenderQR = renderPageQR;
 
-async function initPageQR() {
+async function currentPageTab() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    renderPageQR(tab?.url || "");
+    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (active && /^https?:/i.test(active.url || "")) return active;
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    return tabs.find((t) => /^https?:/i.test(t.url || "")) || active || null;
   } catch (_) {
-    renderPageQR("");
+    return null;
   }
+}
+
+function renderPageCard(tab) {
+  const url = tab?.url || "";
+  const shareable = /^https?:/i.test(url);
+  $("#hdr-page").textContent = shareable
+    ? (tab.title || hostOf(url) || "This page")
+    : "Ready to capture";
+}
+
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return ""; }
+}
+
+async function initPageQR() {
+  const tab = await currentPageTab();
+  renderPageCard(tab);
+  renderPageQR(tab?.url || "");
 }
 
 $("#qr-copy-link").addEventListener("click", () => {
@@ -162,7 +211,11 @@ initPageQR();
     const state = await send({ type: "GET_PAGE_QR" });
     box.checked = !!state?.on;
   } catch (_) {}
-  box.addEventListener("change", () => {
+  box.addEventListener("change", async () => {
+    if (box.checked && !(await ensureSiteAccess())) {
+      box.checked = false;
+      return toast("⚠️ Allow site access to show the page QR.");
+    }
     send({ type: "SET_PAGE_QR", on: box.checked }).catch(() => {});
     toast(box.checked ? "QR shown on pages" : "QR hidden on pages");
   });
@@ -179,6 +232,20 @@ async function tickTimer() {
     $("#rec-time").textContent = `${mm}:${ss}`;
   }
 }
+
+const REC_PREFS = "recPrefs";
+function persistRecPrefs(opts) {
+  chrome.storage.local.set({ [REC_PREFS]: opts }).catch(() => {});
+}
+(async () => {
+  try {
+    const stored = (await chrome.storage.local.get(REC_PREFS))[REC_PREFS];
+    if (!stored) return;
+    if (typeof stored.camera === "boolean") $("#rec-cam").checked = stored.camera;
+    if (typeof stored.mic === "boolean") $("#rec-mic").checked = stored.mic;
+    if (typeof stored.systemAudio === "boolean") $("#rec-audio").checked = stored.systemAudio;
+  } catch (_) { /* first run */ }
+})();
 
 refreshRecordingUI();
 timerInt = setInterval(tickTimer, 500);

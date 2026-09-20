@@ -31,6 +31,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         case "STOP_RECORDING":
           sendResponse(await stopRecording());
           break;
+        case "OCR_CROP":
+          sendResponse(await ocrCrop(msg.dataUrl, msg.rect));
+          break;
         default:
           sendResponse({ error: "offscreen: unknown " + msg.type });
       }
@@ -137,4 +140,103 @@ async function finalizeRecording() {
   activeStream = null;
   recordedChunks = [];
   chrome.runtime.sendMessage({ type: "RECORDING_DONE", dataUrl });
+}
+
+// --- Area OCR (crop a capture, then Tesseract) ------------------------------
+/* global Tesseract */
+let ocrWorker = null;
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function preprocessForOcr(src) {
+  const MIN_DIM = 1600;
+  const scale = Math.min(3, Math.max(1, MIN_DIM / Math.max(src.width, src.height)));
+  const w = Math.round(src.width * scale);
+  const h = Math.round(src.height * scale);
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, w, h);
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  const gray = new Uint8Array(w * h);
+  const hist = new Array(256).fill(0);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+    gray[p] = g;
+    hist[g]++;
+  }
+  const total = w * h;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, maxVar = -1, thresh = 127;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > maxVar) { maxVar = between; thresh = t; }
+  }
+  let dark = 0;
+  for (let p = 0; p < total; p++) if (gray[p] < thresh) dark++;
+  const invert = dark > total * 0.55;
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    let on = gray[p] < thresh;
+    if (invert) on = !on;
+    const v = on ? 0 : 255;
+    d[i] = d[i + 1] = d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+async function getOcrWorker() {
+  if (ocrWorker) return ocrWorker;
+  const base = chrome.runtime.getURL("vendor/tesseract/");
+  ocrWorker = await Tesseract.createWorker("eng", 1, {
+    workerPath: base + "worker.min.js",
+    corePath: chrome.runtime.getURL("vendor/tesseract/"),
+    langPath: base + "lang",
+    gzip: true,
+    workerBlobURL: false,
+  });
+  await ocrWorker.setParameters({
+    tessedit_pageseg_mode: "6",
+    preserve_interword_spaces: "1",
+    tessedit_do_invert: "0",
+  });
+  return ocrWorker;
+}
+
+async function ocrCrop(dataUrl, rect) {
+  if (!dataUrl || !rect) return { error: "Nothing to read." };
+  const img = await loadImage(dataUrl);
+  const x = Math.max(0, Math.round(rect.x));
+  const y = Math.max(0, Math.round(rect.y));
+  const w = Math.min(img.width - x, Math.round(rect.width));
+  const h = Math.min(img.height - y, Math.round(rect.height));
+  if (w < 4 || h < 4) return { error: "Selection is too small." };
+  const crop = document.createElement("canvas");
+  crop.width = w;
+  crop.height = h;
+  crop.getContext("2d").drawImage(img, x, y, w, h, 0, 0, w, h);
+  const worker = await getOcrWorker();
+  const { data } = await worker.recognize(preprocessForOcr(crop));
+  const text = (data.text || "").trim();
+  return { text };
 }

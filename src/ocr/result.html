@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Copied text — SnapShot Studio</title>
+  <link rel="stylesheet" href="result.css" />
+</head>
+<body>
+  <header class="bar">
+    <img class="bar__logo" src="../../icons/icon48.png" width="28" height="28" alt="" />
+    <div class="bar__text">
+      <strong>Copy text</strong>
+      <span id="status">Reading the selected area…</span>
+    </div>
+  </header>
+  <main>
+    <textarea id="text" rows="12" placeholder="Selected text will appear here…"></textarea>
+    <button class="copy" id="btn-copy" disabled>Copy text</button>
+  </main>
+  <div class="toast" id="toast" hidden></div>
+  <script src="result.js"></script>
+</body>
+</html>

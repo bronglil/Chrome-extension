@@ -8,13 +8,14 @@ async function openPopup(context, extensionId) {
 }
 
 test.describe("Page QR (share current page)", () => {
-  test("renders a QR image and the URL for an http(s) page", async ({ context, extensionId }) => {
+  test("renders a QR image for an http(s) page without showing the URL", async ({ context, extensionId }) => {
     const page = await openPopup(context, extensionId);
     const url = "https://example.com/article?id=42";
     await page.evaluate((u) => window.__snapRenderQR(u), url);
 
     await expect(page.locator("#qr-section")).toBeVisible();
-    await expect(page.locator("#qr-url")).toHaveText(url);
+    await expect(page.locator("#qr-url")).toHaveCount(0);
+    await expect(page.locator("#page-card")).toHaveCount(0);
     const src = await page.locator("#qr-img").getAttribute("src");
     expect(src.startsWith("data:image/")).toBe(true);
     expect(src.length).toBeGreaterThan(200); // an actual encoded image

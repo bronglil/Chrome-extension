@@ -10,9 +10,9 @@
 // ============================================================================
 
 (() => {
-  if (window.__snapshotStudioInjected) {
-    // Already present: just (re)register the listener below is idempotent.
-  }
+  const CONTENT_API = 3;
+  if (window.__snapshotStudioApi >= CONTENT_API) return;
+  window.__snapshotStudioApi = CONTENT_API;
   window.__snapshotStudioInjected = true;
 
   // Shared helpers (injected before this script). Fall back gracefully.
@@ -25,11 +25,17 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     switch (msg.type) {
       case "PING":
-        sendResponse({ ok: true });
+        sendResponse({ ok: true, api: CONTENT_API });
         return false;
       case "START_AREA_SELECT":
-        startAreaSelect().then(sendResponse);
+        startAreaSelect(msg).then(sendResponse);
         return true;
+      case "START_COPY_TEXT":
+        startCopyText(msg).then(sendResponse);
+        return true;
+      case "FILL_COPY_TEXT":
+        sendResponse(fillLiveCopy(msg));
+        return false;
       case "START_FULL_PAGE":
         captureFullPage().then(sendResponse).catch((e) =>
           sendResponse({ error: e.message || String(e) })
@@ -43,7 +49,7 @@
   // -------------------------------------------------------------------------
   // Area selection
   // -------------------------------------------------------------------------
-  function startAreaSelect() {
+  function startAreaSelect(msg = {}) {
     return new Promise((resolve) => {
       const dpr = window.devicePixelRatio || 1;
       const overlay = document.createElement("div");
@@ -56,7 +62,7 @@
       dims.style.display = "none";
       const hint = document.createElement("div");
       hint.className = "snapshot-hint";
-      hint.textContent = "Drag to select · Esc to cancel";
+      hint.textContent = msg.hint || "Drag to select · Esc to cancel";
 
       const nodes = [overlay, sel, dims, hint];
       nodes.forEach((n) => document.documentElement.appendChild(n));
@@ -122,6 +128,188 @@
     });
   }
 
+  function rectsOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function textInCssRect(box) {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        const p = node.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        const tag = p.closest("script,style,noscript,textarea,.snapshot-overlay,.snapshot-selection,.snapshot-copybar,.snapshot-hint,.snapshot-dims");
+        if (tag) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    const hits = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      const range = document.createRange();
+      try { range.selectNodeContents(node); } catch (_) { continue; }
+      const r = range.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      if (!rectsOverlap(box, { x: r.left, y: r.top, w: r.width, h: r.height })) continue;
+      hits.push({ y: r.top, x: r.left, text: node.nodeValue.replace(/\s+/g, " ").trim() });
+    }
+    hits.sort((a, b) => a.y - b.y || a.x - b.x);
+    return hits.map((h) => h.text).filter(Boolean).join("\n");
+  }
+
+  let liveCopy = null;
+
+  function fillLiveCopy(msg) {
+    if (!liveCopy) return { ok: false };
+    const t = String(msg.text || "").trim();
+    liveCopy.area.value = t || msg.error || "No text found in this area.";
+    liveCopy.copyBtn.disabled = !t;
+    if (t) {
+      navigator.clipboard.writeText(t).catch(() => {});
+      liveCopy.copyBtn.textContent = "Copied";
+      liveCopy.area.focus();
+      liveCopy.area.select();
+    }
+    return { ok: true };
+  }
+
+  function startCopyText() {
+    return new Promise((resolve) => {
+      const dpr = window.devicePixelRatio || 1;
+      const overlay = document.createElement("div");
+      overlay.className = "snapshot-overlay";
+      const sel = document.createElement("div");
+      sel.className = "snapshot-selection";
+      sel.style.display = "none";
+      const dims = document.createElement("div");
+      dims.className = "snapshot-dims";
+      dims.style.display = "none";
+      const hint = document.createElement("div");
+      hint.className = "snapshot-hint";
+      hint.textContent = "Drag a rectangle around the text · Esc to cancel";
+
+      const nodes = [overlay, sel, dims, hint];
+      nodes.forEach((n) => document.documentElement.appendChild(n));
+
+      let startX = 0, startY = 0, dragging = false, finished = false, settled = false;
+
+      function cleanup() {
+        liveCopy = null;
+        nodes.forEach((n) => n.remove());
+        document.removeEventListener("keydown", onKey, true);
+        window.removeEventListener("mouseup", onUp, true);
+      }
+      function onKey(e) {
+        if (e.key !== "Escape") return;
+        e.preventDefault();
+        const wasSettled = settled;
+        cleanup();
+        if (!wasSettled) resolve({ cancelled: true });
+        finished = true;
+        settled = true;
+      }
+      function onUp(e) {
+        if (!dragging || finished) return;
+        dragging = false;
+        const rect = geom(e.clientX, e.clientY);
+        if (rect.w < 8 || rect.h < 8) return;
+        finished = true;
+        hint.remove();
+        dims.remove();
+        overlay.style.pointerEvents = "none";
+        overlay.style.background = "transparent";
+        showCopyBar(rect);
+      }
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener("mouseup", onUp, true);
+
+      overlay.addEventListener("mousedown", (e) => {
+        if (finished) return;
+        dragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        sel.style.display = "block";
+        dims.style.display = "block";
+        update(e.clientX, e.clientY);
+      });
+      overlay.addEventListener("mousemove", (e) => {
+        if (dragging) update(e.clientX, e.clientY);
+      });
+
+      function geom(curX, curY) {
+        return {
+          x: Math.min(startX, curX),
+          y: Math.min(startY, curY),
+          w: Math.abs(curX - startX),
+          h: Math.abs(curY - startY),
+        };
+      }
+      function update(curX, curY) {
+        const { x, y, w, h } = geom(curX, curY);
+        sel.style.left = x + "px";
+        sel.style.top = y + "px";
+        sel.style.width = w + "px";
+        sel.style.height = h + "px";
+        dims.textContent = `${Math.round(w)} × ${Math.round(h)}`;
+        dims.style.left = x + "px";
+        dims.style.top = Math.max(0, y - 24) + "px";
+      }
+
+      function showCopyBar(rect) {
+        const deviceRect = {
+          x: Math.round(rect.x * dpr),
+          y: Math.round(rect.y * dpr),
+          width: Math.round(rect.w * dpr),
+          height: Math.round(rect.h * dpr),
+        };
+        const text = textInCssRect(rect);
+        const bar = document.createElement("div");
+        bar.className = "snapshot-copybar";
+        const area = document.createElement("textarea");
+        area.className = "snapshot-copybar__text";
+        area.value = text || "Reading text…";
+        const acts = document.createElement("div");
+        acts.className = "snapshot-copybar__acts";
+        const copyBtn = document.createElement("button");
+        copyBtn.type = "button";
+        copyBtn.className = "snapshot-copybar__copy";
+        copyBtn.textContent = "Copy text";
+        copyBtn.disabled = !text;
+        const doneBtn = document.createElement("button");
+        doneBtn.type = "button";
+        doneBtn.className = "snapshot-copybar__done";
+        doneBtn.textContent = "Done";
+        acts.append(copyBtn, doneBtn);
+        bar.append(area, acts);
+        document.documentElement.appendChild(bar);
+        nodes.push(bar);
+
+        const top = rect.y + rect.h + 10 + 160 > window.innerHeight
+          ? Math.max(8, rect.y - 168)
+          : rect.y + rect.h + 8;
+        bar.style.left = Math.max(8, Math.min(rect.x, window.innerWidth - 360)) + "px";
+        bar.style.top = top + "px";
+
+        liveCopy = { area, copyBtn };
+        copyBtn.addEventListener("click", async () => {
+          const value = area.value || text;
+          if (!value || value === "Reading text…") return;
+          try { await navigator.clipboard.writeText(value); } catch (_) { /* keep panel */ }
+          copyBtn.textContent = "Copied";
+        });
+        doneBtn.addEventListener("click", cleanup);
+
+        if (text) {
+          navigator.clipboard.writeText(text).catch(() => {});
+          area.focus();
+          area.select();
+        }
+        settled = true;
+        resolve({ text, deviceRect, copied: !!text });
+      }
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Full-page scroll-and-stitch
   // -------------------------------------------------------------------------
@@ -153,6 +341,7 @@
     const els = document.querySelectorAll("*");
     for (const el of els) {
       const cs = getComputedStyle(el);
+      if (el.closest && el.closest(".snapshot-progress, .snapshot-overlay, .snapshot-copybar, .snapshot-error, .snapshot-hint, .snapshot-selection, .snapshot-dims")) continue;
       if ((cs.position === "fixed" || cs.position === "sticky") &&
           cs.display !== "none" && el.offsetHeight > 0) {
         hidden.push([el, el.style.visibility]);
@@ -161,78 +350,127 @@
     return hidden;
   }
 
+  function progressHud() {
+    let el = document.querySelector(".snapshot-progress");
+    if (el) return el;
+    el = document.createElement("div");
+    el.className = "snapshot-progress";
+    el.innerHTML =
+      '<div class="snapshot-progress__title">Capturing full page</div>' +
+      '<div class="snapshot-progress__count"></div>' +
+      '<div class="snapshot-progress__dots"></div>';
+    document.documentElement.appendChild(el);
+    return el;
+  }
+
+  function hideProgressHud() {
+    const el = document.querySelector(".snapshot-progress");
+    if (el) el.style.visibility = "hidden";
+  }
+
+  function showProgressHud(done, total) {
+    const el = progressHud();
+    el.style.visibility = "visible";
+    const left = Math.max(0, total - done);
+    el.querySelector(".snapshot-progress__count").textContent =
+      done + " taken · " + left + " left · " + total + " screens";
+    const host = el.querySelector(".snapshot-progress__dots");
+    host.innerHTML = "";
+    const shown = Math.min(total, 32);
+    const filled = total ? Math.round((done / total) * shown) : 0;
+    for (let i = 0; i < shown; i++) {
+      const d = document.createElement("span");
+      d.className = "snapshot-progress__dot" + (i < filled ? " is-on" : "");
+      host.appendChild(d);
+    }
+  }
+
+  function removeProgressHud() {
+    document.querySelector(".snapshot-progress")?.remove();
+  }
+
   async function captureFullPage() {
-    const m = pageMetrics();
+    const html = document.documentElement;
     const originalScrollY = window.scrollY;
     const originalScrollX = window.scrollX;
-    const originalOverflow = document.documentElement.style.overflow;
+    const prevOverflow = html.style.overflow;
+    const prevBehavior = html.style.scrollBehavior;
 
-    // Cap total height to the canvas limit; tile if the page is taller.
-    const cappedHeight = Math.min(m.totalHeight, Math.floor(MAX_CANVAS / m.dpr));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(m.totalWidth * m.dpr);
-    canvas.height = Math.round(cappedHeight * m.dpr);
-    const ctx = canvas.getContext("2d");
+    html.style.overflow = "hidden";
+    html.style.scrollBehavior = "auto";
 
     let fixedHidden = [];
     try {
       window.scrollTo(0, 0);
-      await sleep(profile.settleMs); // let lazy content settle at top
+      await sleep(profile.settleMs);
 
-      let y = 0;
-      let first = true;
-      while (y < cappedHeight) {
+      const m = pageMetrics();
+      const scaleY = (imgH) => imgH / Math.max(1, m.viewH);
+      const cappedCss = Math.min(m.totalHeight, Math.floor(MAX_CANVAS / m.dpr));
+      const total = Math.max(1, Math.ceil(cappedCss / Math.max(1, m.viewH)));
+      let taken = 0;
+      showProgressHud(0, total);
+
+      const takeSlice = async () => {
+        hideProgressHud();
+        await sleep(40);
+        const res = await requestSlice();
+        taken += 1;
+        showProgressHud(taken, total);
+        return res;
+      };
+
+      const firstRes = await takeSlice();
+      if (firstRes?.error) throw new Error(firstRes.error);
+      const first = await loadImage(firstRes.dataUrl);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = first.width;
+      canvas.height = Math.min(Math.round(cappedCss * scaleY(first.height)), MAX_CANVAS);
+      const ctx = canvas.getContext("2d", { alpha: false });
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(first, 0, 0);
+
+      let y = m.viewH;
+      while (y < cappedCss - 1) {
         window.scrollTo(0, y);
-        await sleep(profile.sliceDelayMs); // wait for scroll + lazy images
+        await sleep(profile.sliceDelayMs);
+        const actualY = window.scrollY;
 
-        // After the first slice, hide fixed/sticky elements to avoid repeats.
-        if (first) {
-          first = false;
-        } else if (fixedHidden.length === 0) {
+        if (!fixedHidden.length && actualY > 0) {
           fixedHidden = collectFixed();
           fixedHidden.forEach(([el]) => (el.style.visibility = "hidden"));
           await sleep(60);
         }
 
-        // Ask the service worker to capture the visible tab (rate-limited).
-        const res = await requestSlice();
+        const res = await takeSlice();
         if (res?.error) throw new Error(res.error);
         const img = await loadImage(res.dataUrl);
+        const destY = Math.round(actualY * scaleY(first.height));
+        const remaining = canvas.height - destY;
+        if (remaining <= 2) break;
 
-        const sliceTopDevice = Math.round(y * m.dpr);
-        // On the last slice the scroll can't advance a full viewport; the
-        // captured image still shows the bottom viewport, so draw the portion
-        // that belongs below sliceTop.
-        const remaining = canvas.height - sliceTopDevice;
-        const drawH = Math.min(img.height, remaining);
-        const srcY = img.height - drawH; // bottom-align on the final short slice
-        const alignedTop = y + m.viewH <= cappedHeight ? sliceTopDevice
-          : canvas.height - drawH;
+        const atEnd = actualY + m.viewH >= cappedCss - 1;
+        const srcY = atEnd ? Math.max(0, img.height - remaining) : 0;
+        const drawH = Math.min(img.height - srcY, remaining);
+        ctx.drawImage(img, 0, srcY, img.width, drawH, 0, destY, img.width, drawH);
 
-        if (y + m.viewH <= cappedHeight) {
-          ctx.drawImage(img, 0, 0, img.width, drawH, 0, sliceTopDevice, img.width, drawH);
-        } else {
-          ctx.drawImage(img, 0, srcY, img.width, drawH, 0, alignedTop, img.width, drawH);
-        }
-
-        if (y + m.viewH >= cappedHeight) break;
-        y += m.viewH;
-
-        // Respect captureVisibleTab's ~2/sec rate limit (device-adaptive).
+        if (atEnd || actualY + 1 < y) break;
+        y = actualY + m.viewH;
         await sleep(Math.max(220, profile.sliceDelayMs - 60));
       }
 
-      const dataUrl = canvas.toDataURL("image/png");
       return {
-        dataUrl,
+        dataUrl: canvas.toDataURL("image/png"),
         width: canvas.width,
         height: canvas.height,
-        tiles: m.totalHeight > cappedHeight ? 2 : 1,
+        tiles: m.totalHeight > cappedCss ? 2 : 1,
       };
     } finally {
+      removeProgressHud();
       fixedHidden.forEach(([el, vis]) => (el.style.visibility = vis));
-      document.documentElement.style.overflow = originalOverflow;
+      html.style.overflow = prevOverflow;
+      html.style.scrollBehavior = prevBehavior;
       window.scrollTo(originalScrollX, originalScrollY);
     }
   }

@@ -26,6 +26,22 @@ test.describe("Editor — annotation tools", () => {
     await expect(page.locator("#empty-state")).toBeHidden(); // no "No image yet" over the capture
   });
 
+  test("shows webpage details and download actions after a capture", async ({ context, extensionId }) => {
+    const id = await seedCapture(context, await makeImageDataUrl(context, { w: 400, h: 300 }), {
+      kind: "fullpage",
+      title: "Example Domain",
+      url: "https://example.com/docs",
+    });
+    const page = await openEditor(context, extensionId, id);
+    await expect(page.locator("#source-panel")).toBeVisible();
+    await expect(page.locator("#src-title")).toHaveText("Example Domain");
+    await expect(page.locator("#src-url")).toHaveAttribute("href", "https://example.com/docs");
+    await expect(page.locator("#src-facts")).toContainText("Full page");
+    await expect(page.locator("#src-png")).toBeVisible();
+    await expect(page.locator("#src-pdf")).toBeVisible();
+    await expect(page.locator("#mode-label")).toContainText("example.com");
+  });
+
   test("draws a rectangle annotation", async ({ context, extensionId }) => {
     const id = await seedCapture(context, await makeImageDataUrl(context));
     const page = await openEditor(context, extensionId, id);

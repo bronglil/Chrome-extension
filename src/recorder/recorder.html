@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SnapShot Studio — Recording</title>
+  <link rel="stylesheet" href="recorder.css" />
+</head>
+<body>
+  <header class="bar">
+    <img class="bar__logo" src="../../icons/icon48.png" width="28" height="28" alt="" />
+    <div class="bar__text">
+      <strong>Recording</strong>
+      <span id="status-label">Choose what to share…</span>
+    </div>
+    <div class="bar__live" id="live-chip" hidden>
+      <span class="bar__pulse"></span>
+      <span id="rec-clock">00:00</span>
+    </div>
+  </header>
+
+  <main class="stage">
+    <div class="screen-wrap">
+      <video id="screen-preview" autoplay muted playsinline></video>
+      <p class="screen-empty" id="screen-empty">Click Share screen, then pick a screen, window, or tab.</p>
+    </div>
+
+    <section class="person" id="person-panel" hidden>
+      <video id="cam-preview" autoplay muted playsinline></video>
+      <span class="person__tag">You</span>
+    </section>
+    <p class="person-off" id="person-off" hidden>Screen only — camera is off</p>
+  </main>
+
+  <footer class="dock">
+    <div class="flags" id="flags"></div>
+    <button class="share" id="btn-share">Share screen to start</button>
+    <button class="stop" id="btn-stop" disabled hidden>
+      <span class="stop__sq"></span>
+      Stop &amp; save
+    </button>
+  </footer>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="recorder.js"></script>
+</body>
+</html>

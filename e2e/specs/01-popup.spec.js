@@ -9,6 +9,7 @@ test.describe("Popup UI", () => {
     await expect(page.locator('[data-action="capture-visible"]').first()).toBeVisible();
     await expect(page.locator('[data-action="capture-area"]').first()).toBeVisible();
     await expect(page.locator('[data-action="capture-full-page"]')).toBeVisible();
+    await expect(page.locator('[data-action="ocr-area"]')).toBeVisible();
 
     // Desktop capture family (share picker).
     await expect(page.locator('[data-action="capture-fullscreen"]')).toBeVisible();
@@ -19,8 +20,9 @@ test.describe("Popup UI", () => {
     await expect(page.locator('[data-delay="5"]')).toBeVisible();
     await expect(page.locator('[data-delay="10"]')).toBeVisible();
 
-    // Recording controls.
+    // Recording controls — camera, mic, and system audio are independently optional.
     await expect(page.locator("#rec-toggle")).toBeVisible();
+    await expect(page.locator("#rec-cam")).toBeVisible();
     await expect(page.locator("#rec-mic")).toBeVisible();
     await expect(page.locator("#rec-audio")).toBeVisible();
     await expect(page.locator("#rec-label")).toHaveText("Start recording");
