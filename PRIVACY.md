@@ -36,7 +36,7 @@ No other network requests are made.
 
 ## Permissions and why they are needed
 
-- `activeTab`, `tabs`, `host_permissions` — read the current tab's URL/title and
+- `activeTab`, `host_permissions` — read the current tab's URL/title and
   capture the visible page.
 - `tabCapture`, `desktopCapture`, `offscreen` — capture and record the screen or
   a window (via the browser's own picker).
