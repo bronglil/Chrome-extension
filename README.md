@@ -53,6 +53,9 @@ all PDF work use libraries vendored under `vendor/`.
 
 No build step — plain JavaScript. Requires **Chrome 116+** (offscreen documents).
 
+All surfaces (popup, editor, PDF editor) automatically follow the **system
+light/dark theme** — including native controls via `color-scheme`.
+
 ## Keyboard shortcuts
 
 | Action | Windows / Linux | macOS |
@@ -119,10 +122,10 @@ npm ci
 
 - **Unit — `test/` (20):** the reusable core in `src/lib/utils.js` — `clampRect`,
   `throttle`, `rafDebounce`, `loadImage`, `blobToDataUrl`, and `deviceProfile()`.
-- **E2E — `e2e/` (27, Playwright):** load the real unpacked extension and drive
+- **E2E — `e2e/` (30, Playwright):** load the real unpacked extension and drive
   it — popup, editor annotations/export, `captureVisibleTab`, full-page
   scroll-and-stitch, area select, offline OCR & QR, and the PDF editor
-  (open, page nav, pen, highlighter, signature, signed-PDF export).
+  (open, page nav, pen, highlighter, signature, signed-PDF export), and light/dark theming.
 
 > MV3 extensions load only in **headed** Chromium, so E2E runs under **Xvfb**.
 > The fixture picks the pre-installed browser, or Playwright's own if none —

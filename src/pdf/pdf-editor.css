@@ -4,6 +4,8 @@
    shadows and hairline borders. Tuned for both light and dark.
    =========================================================================== */
 :root {
+  /* Follow the system theme, incl. native controls (scrollbars, select, inputs). */
+  color-scheme: light dark;
   --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
   --bg: #eef0f4;

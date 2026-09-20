@@ -4,6 +4,8 @@
    icons and a single indigo accent. Shares the plugin's visual system.
    =========================================================================== */
 :root {
+  /* Follow the system theme, incl. native controls (scrollbars, select, inputs). */
+  color-scheme: light dark;
   --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --bg: #eceef2;
   --surface: #ffffff;
