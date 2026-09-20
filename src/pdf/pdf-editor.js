@@ -34,6 +34,8 @@ const state = {
   // Per-page overlay JSON + the pixel viewport used when rendered.
   pageOverlays: {},    // { [pageNum]: konvaJSON }
   pageSizes: {},       // { [pageNum]: {w,h} } in rendered pixels
+  acknowledge: false,  // stamp "AK" at the bottom of every page
+  ackLayer: null,      // on-screen AK badge (redrawn per page; not serialized)
 };
 
 // ---- UI helpers ------------------------------------------------------------
@@ -123,12 +125,55 @@ async function renderPage(num) {
   state.transformer = new Konva.Transformer({ rotateEnabled: true, ignoreStroke: true });
   state.overlayLayer.add(state.transformer);
 
+  // A separate top layer for the AK acknowledgement badge (never serialized).
+  state.ackLayer = new Konva.Layer({ listening: false });
+  state.stage.add(state.ackLayer);
+
   // Restore any overlays previously placed on this page.
   loadOverlay(num);
   bindStage();
+  drawAck();
   state.baseLayer.draw();
   state.overlayLayer.draw();
 }
+
+// Draw (or clear) the on-screen "AK" badge at the bottom-centre of the page.
+function drawAck() {
+  if (!state.ackLayer) return;
+  state.ackLayer.destroyChildren();
+  if (state.acknowledge && state.stage) {
+    const W = state.stage.width();
+    const H = state.stage.height();
+    // Signature-style: cursive + italic "AK" with an underline, bottom-centre.
+    const text = new Konva.Text({
+      text: "AK", fontSize: 30, fontStyle: "italic bold",
+      fontFamily: '"Segoe Script","Snell Roundhand","Brush Script MT",cursive',
+      fill: "#4f46e5",
+    });
+    const tw = text.width();
+    const x = (W - tw) / 2, y = H - 52;
+    text.position({ x, y });
+    const underline = new Konva.Line({
+      points: [x - 4, y + 34, x + tw + 4, y + 34], stroke: "#4f46e5", strokeWidth: 1.5, lineCap: "round",
+    });
+    state.ackLayer.add(underline, text);
+  }
+  state.ackLayer.draw();
+}
+
+// Toggle the acknowledgement.
+document.addEventListener("DOMContentLoaded", () => {}); // noop guard for order
+function wireAck() {
+  const btn = $("#pe-ack");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    state.acknowledge = !state.acknowledge;
+    btn.classList.toggle("is-active", state.acknowledge);
+    drawAck();
+    toast(state.acknowledge ? "AK will be stamped on every page" : "Acknowledgement removed");
+  });
+}
+wireAck();
 
 function saveOverlay(num) {
   if (!state.overlayLayer) return;
@@ -453,6 +498,22 @@ async function exportPdf() {
       const page = pages[num - 1];
       const { width, height } = page.getSize();
       page.drawImage(png, { x: 0, y: 0, width, height });
+    }
+
+    // Stamp the "AK" acknowledgement — italic, signature-style — on every page.
+    if (state.acknowledge) {
+      const font = await pdf.embedFont(PDFLib.StandardFonts.HelveticaBoldOblique);
+      const size = 22;
+      const ink = PDFLib.rgb(0.31, 0.27, 0.9);
+      pages.forEach((page) => {
+        const { width } = page.getSize();
+        const tw = font.widthOfTextAtSize("AK", size);
+        const x = (width - tw) / 2;
+        const y = 24;
+        page.drawText("AK", { x, y, size, font, color: ink });
+        // A signature-like underline stroke beneath the mark.
+        page.drawLine({ start: { x: x - 3, y: y - 4 }, end: { x: x + tw + 3, y: y - 4 }, thickness: 1.2, color: ink });
+      });
     }
 
     progress("Saving…", 0.95);
