@@ -117,6 +117,28 @@ test.describe("PDF editor", () => {
     )).toBeGreaterThan(0);
   });
 
+  test("Acknowledge avoids overwriting: picks the free bottom corner", async ({ context, extensionId }) => {
+    const page = await openPdfEditor(context, extensionId);
+    const sides = await page.evaluate(() => {
+      const mk = (paint) => {
+        const c = document.createElement("canvas");
+        c.width = 600; c.height = 400;
+        const x = c.getContext("2d");
+        x.fillStyle = "#fff"; x.fillRect(0, 0, 600, 400);
+        paint(x);
+        return c;
+      };
+      const pick = window.__pdfEditor.chooseAckSide;
+      const blank = mk(() => {});
+      const rightBusy = mk((x) => { x.fillStyle = "#000"; x.fillRect(430, 360, 150, 30); });
+      const leftBusy = mk((x) => { x.fillStyle = "#000"; x.fillRect(10, 360, 150, 30); });
+      return { blank: pick(blank), rightBusy: pick(rightBusy), leftBusy: pick(leftBusy) };
+    });
+    expect(sides.blank).toBe("right");     // empty page ⇒ default right
+    expect(sides.rightBusy).toBe("left");  // footer on the right ⇒ move left
+    expect(sides.leftBusy).toBe("right");  // content on the left ⇒ stay right
+  });
+
   test("exports a signed PDF larger than the original", async ({ context, extensionId }) => {
     const page = await openPdfEditor(context, extensionId);
     await loadSample(page);
