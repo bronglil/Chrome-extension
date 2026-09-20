@@ -278,7 +278,7 @@ async function ensureContentScript(tabId) {
     });
     api = inj?.result || 0;
   } catch (_) { /* restricted page or not injected yet */ }
-  if (api >= 3) return;
+  if (api >= 4) return;
   await chrome.scripting.insertCSS({
     target: { tabId },
     files: ["src/content/area-select.css"],
@@ -329,17 +329,21 @@ async function ocrArea() {
   await ensureContentScript(tab.id);
   const result = await chrome.tabs.sendMessage(tab.id, { type: "START_COPY_TEXT" });
   if (!result || result.cancelled) return;
-  if ((result.text || "").trim()) return;
-
   const rect = result.deviceRect;
   if (!rect) return;
+
   const dataUrl = await captureVisible(tab.windowId);
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: "COPY_TEXT_CAPTURED" });
+  } catch (_) { /* overlay gone */ }
+
   const res = await toOffscreen({ type: "OCR_CROP", dataUrl, rect });
+  const text = String(res?.text || "").trim() || String(result.domText || "").trim();
   try {
     await chrome.tabs.sendMessage(tab.id, {
       type: "FILL_COPY_TEXT",
-      text: res?.text || "",
-      error: res?.error || "",
+      text,
+      error: text ? "" : (res?.error || "No text found in this area."),
     });
   } catch (_) { /* overlay already closed */ }
 }

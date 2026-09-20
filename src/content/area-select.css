@@ -9,9 +9,9 @@
 .snapshot-selection {
   position: fixed;
   z-index: 2147483647;
-  border: 2px solid #3b82f6;
-  background: rgba(59, 130, 246, 0.12);
-  box-shadow: 0 0 0 100000px rgba(0, 0, 0, 0.28);
+  border: 2px solid #60a5fa;
+  background: rgba(96, 165, 250, 0.08);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
   pointer-events: none;
 }
 .snapshot-dims {

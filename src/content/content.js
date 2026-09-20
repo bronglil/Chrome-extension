@@ -10,7 +10,7 @@
 // ============================================================================
 
 (() => {
-  const CONTENT_API = 3;
+  const CONTENT_API = 4;
   if (window.__snapshotStudioApi >= CONTENT_API) return;
   window.__snapshotStudioApi = CONTENT_API;
   window.__snapshotStudioInjected = true;
@@ -33,6 +33,9 @@
       case "START_COPY_TEXT":
         startCopyText(msg).then(sendResponse);
         return true;
+      case "COPY_TEXT_CAPTURED":
+        sendResponse(revealCopySelection());
+        return false;
       case "FILL_COPY_TEXT":
         sendResponse(fillLiveCopy(msg));
         return false;
@@ -160,6 +163,7 @@
   let liveCopy = null;
 
   function fillLiveCopy(msg) {
+    revealCopySelection();
     if (!liveCopy) return { ok: false };
     const t = String(msg.text || "").trim();
     liveCopy.area.value = t || msg.error || "No text found in this area.";
@@ -170,6 +174,20 @@
       liveCopy.area.focus();
       liveCopy.area.select();
     }
+    return { ok: true };
+  }
+
+  function revealCopySelection() {
+    if (!liveCopy) return { ok: false };
+    liveCopy.nodes.forEach((n) => {
+      if (!n.isConnected) return;
+      n.style.visibility = "visible";
+    });
+    if (liveCopy.overlay) {
+      liveCopy.overlay.style.pointerEvents = "none";
+      liveCopy.overlay.style.background = "transparent";
+    }
+    if (liveCopy.bar) liveCopy.bar.hidden = false;
     return { ok: true };
   }
 
@@ -186,7 +204,7 @@
       dims.style.display = "none";
       const hint = document.createElement("div");
       hint.className = "snapshot-hint";
-      hint.textContent = "Drag a rectangle around the text · Esc to cancel";
+      hint.textContent = "Drag a box around the text · Esc to cancel";
 
       const nodes = [overlay, sel, dims, hint];
       nodes.forEach((n) => document.documentElement.appendChild(n));
@@ -214,17 +232,14 @@
         const rect = geom(e.clientX, e.clientY);
         if (rect.w < 8 || rect.h < 8) return;
         finished = true;
-        hint.remove();
-        dims.remove();
-        overlay.style.pointerEvents = "none";
-        overlay.style.background = "transparent";
-        showCopyBar(rect);
+        armCapture(rect);
       }
       document.addEventListener("keydown", onKey, true);
       window.addEventListener("mouseup", onUp, true);
 
       overlay.addEventListener("mousedown", (e) => {
         if (finished) return;
+        e.preventDefault();
         dragging = true;
         startX = e.clientX;
         startY = e.clientY;
@@ -256,25 +271,18 @@
       }
 
       function showCopyBar(rect) {
-        const deviceRect = {
-          x: Math.round(rect.x * dpr),
-          y: Math.round(rect.y * dpr),
-          width: Math.round(rect.w * dpr),
-          height: Math.round(rect.h * dpr),
-        };
-        const text = textInCssRect(rect);
         const bar = document.createElement("div");
         bar.className = "snapshot-copybar";
         const area = document.createElement("textarea");
         area.className = "snapshot-copybar__text";
-        area.value = text || "Reading text…";
+        area.value = "Reading text…";
         const acts = document.createElement("div");
         acts.className = "snapshot-copybar__acts";
         const copyBtn = document.createElement("button");
         copyBtn.type = "button";
         copyBtn.className = "snapshot-copybar__copy";
         copyBtn.textContent = "Copy text";
-        copyBtn.disabled = !text;
+        copyBtn.disabled = true;
         const doneBtn = document.createElement("button");
         doneBtn.type = "button";
         doneBtn.className = "snapshot-copybar__done";
@@ -289,23 +297,37 @@
           : rect.y + rect.h + 8;
         bar.style.left = Math.max(8, Math.min(rect.x, window.innerWidth - 360)) + "px";
         bar.style.top = top + "px";
+        bar.hidden = true;
 
-        liveCopy = { area, copyBtn };
         copyBtn.addEventListener("click", async () => {
-          const value = area.value || text;
+          const value = area.value;
           if (!value || value === "Reading text…") return;
           try { await navigator.clipboard.writeText(value); } catch (_) { /* keep panel */ }
           copyBtn.textContent = "Copied";
         });
         doneBtn.addEventListener("click", cleanup);
+        return { bar, area, copyBtn };
+      }
 
-        if (text) {
-          navigator.clipboard.writeText(text).catch(() => {});
-          area.focus();
-          area.select();
-        }
+      async function armCapture(rect) {
+        hint.remove();
+        dims.remove();
+        const panel = showCopyBar(rect);
+        liveCopy = { ...panel, overlay, nodes: [overlay, sel, panel.bar] };
+        // Hide the box so the screenshot (and OCR) sees the real page, like Shottr.
+        [overlay, sel, panel.bar].forEach((n) => { n.style.visibility = "hidden"; });
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
         settled = true;
-        resolve({ text, deviceRect, copied: !!text });
+        resolve({
+          deviceRect: {
+            x: Math.round(rect.x * dpr),
+            y: Math.round(rect.y * dpr),
+            width: Math.round(rect.w * dpr),
+            height: Math.round(rect.h * dpr),
+          },
+          domText: textInCssRect(rect),
+          needOcr: true,
+        });
       }
     });
   }
