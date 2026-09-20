@@ -126,11 +126,15 @@ npm ci
 
 - **Unit — `test/` (20):** the reusable core in `src/lib/utils.js` — `clampRect`,
   `throttle`, `rafDebounce`, `loadImage`, `blobToDataUrl`, and `deviceProfile()`.
-- **E2E — `e2e/` (34, Playwright):** load the real unpacked extension and drive
+- **E2E — `e2e/` (41, Playwright):** load the real unpacked extension and drive
   it — popup, editor annotations/export, `captureVisibleTab`, full-page
   scroll-and-stitch, area select, offline OCR & QR, the PDF editor
   (open, page nav, pen, highlighter, signature, signed-PDF export), the page-QR
   share panel (encode + jsQR round-trip), and light/dark theming.
+- **Performance — `e2e/specs/09-performance.spec.js`:** a per-tool budget for
+  every major feature (QR encode/decode, editor export, full-page stitch, OCR,
+  PDF render, PDF export) — each measures the real operation and asserts an
+  upper bound, logging the actual timing to catch regressions.
 
 > MV3 extensions load only in **headed** Chromium. On Linux `npm run test:e2e`
 > auto-uses **Xvfb** when there's no display; on macOS/Windows it runs directly.
