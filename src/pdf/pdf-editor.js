@@ -151,7 +151,7 @@ function drawAck() {
       fill: "#4f46e5",
     });
     const tw = text.width();
-    const x = (W - tw) / 2, y = H - 52;
+    const x = W - tw - 40, y = H - 52; // bottom-right
     text.position({ x, y });
     const underline = new Konva.Line({
       points: [x - 4, y + 34, x + tw + 4, y + 34], stroke: "#4f46e5", strokeWidth: 1.5, lineCap: "round",
@@ -508,7 +508,7 @@ async function exportPdf() {
       pages.forEach((page) => {
         const { width } = page.getSize();
         const tw = font.widthOfTextAtSize("AK", size);
-        const x = (width - tw) / 2;
+        const x = width - tw - 40; // bottom-right
         const y = 24;
         page.drawText("AK", { x, y, size, font, color: ink });
         // A signature-like underline stroke beneath the mark.
