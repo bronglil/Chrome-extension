@@ -1,8 +1,17 @@
-# SnapShot Studio
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png" />
+    <img src="docs/logo.png" alt="SnapShot Studio" width="360" />
+  </picture>
+</p>
 
-**🌐 Website:** https://bronglil.github.io/Chrome-extension/ &nbsp;·&nbsp;
-**📦 Downloads:** [Releases](https://github.com/bronglil/Chrome-extension/releases) &nbsp;·&nbsp;
-**🔒 Privacy:** [Policy](PRIVACY.md)
+<p align="center">
+  <b>🌐 Website:</b> <a href="https://bronglil.github.io/Chrome-extension/">bronglil.github.io/Chrome-extension</a> &nbsp;·&nbsp;
+  <b>📦 Downloads:</b> <a href="https://github.com/bronglil/Chrome-extension/releases">Releases</a> &nbsp;·&nbsp;
+  <b>🔒 Privacy:</b> <a href="PRIVACY.md">Policy</a>
+</p>
+
+# SnapShot Studio
 
 A Manifest V3 Chrome extension for **screenshots, screen recording, OCR, QR
 decoding, annotation, and PDF signing** — inspired by Shottr and GoFullPage.
