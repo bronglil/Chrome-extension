@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privacy Policy — SnapShot Studio</title>
+<link rel="icon" href="icon128.png" />
+<style>
+  :root{ color-scheme: light dark;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --bg:#f6f7fb;--surface:#fff;--ink:#161b26;--soft:#5b6472;--faint:#98a1b0;--line:#e6e9ef;--accent:#4f46e5;}
+  @media (prefers-color-scheme:dark){:root{--bg:#0c0f16;--surface:#141924;--ink:#e8ebf1;--soft:#a4adbb;--faint:#6b7482;--line:#232a36;--accent:#8b83ff;}}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:var(--font);background:var(--bg);color:var(--ink);line-height:1.65}
+  .wrap{max-width:760px;margin:0 auto;padding:0 20px}
+  nav{border-bottom:1px solid var(--line);background:var(--surface)}
+  .nav-in{display:flex;align-items:center;gap:10px;height:58px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700}
+  .brand img{width:26px;height:26px;border-radius:7px}
+  .nav-in a{margin-left:auto;color:var(--accent);text-decoration:none;font-size:14px;font-weight:600}
+  header{padding:44px 0 8px}
+  h1{font-size:32px;letter-spacing:-.02em;margin:0 0 6px}
+  .updated{color:var(--faint);font-size:13px}
+  main{padding:8px 0 60px}
+  h2{font-size:19px;margin:32px 0 8px}
+  p,li{color:var(--soft)} p strong,li strong{color:var(--ink)}
+  code{background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);padding:2px 6px;border-radius:6px;font-size:.92em}
+  .lead{font-size:17px;color:var(--ink)}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-top:16px}
+  footer{border-top:1px solid var(--line);padding:24px 0;color:var(--faint);font-size:13px}
+  footer a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<nav><div class="wrap nav-in">
+  <span class="brand"><img src="icon128.png" alt=""/> SnapShot Studio</span>
+  <a href="index.html">← Back to site</a>
+</div></nav>
+
+<div class="wrap">
+<header>
+  <h1>Privacy Policy</h1>
+  <div class="updated">Last updated: 20 September 2026</div>
+</header>
+
+<main>
+  <p class="lead">SnapShot Studio is <strong>private by default</strong>. Everything it does runs
+  <strong>locally in your browser</strong>. There is no backend server, no analytics, and no
+  tracking. The extension <strong>does not collect, transmit, or sell any personal data</strong>.</p>
+
+  <div class="card">
+    <h2 style="margin-top:0">What data the extension handles</h2>
+    <ul>
+      <li><strong>Captures, recordings, and documents</strong> are processed entirely on your
+        device — held only in browser memory and in <code>chrome.storage.local</code> for the brief
+        moment needed to hand a capture to the editor, then removed.</li>
+      <li><strong>OCR and QR decoding</strong> run fully offline with bundled libraries. Image
+        contents are never uploaded.</li>
+      <li><strong>PDF signing</strong> happens on your device; your document is never sent anywhere.</li>
+      <li><strong>Preferences</strong>, if stored, stay in <code>chrome.storage.local</code> on your device only.</li>
+    </ul>
+  </div>
+
+  <h2>Actions that leave your device (only when you ask)</h2>
+  <ul>
+    <li><strong>Save to Downloads</strong> — writes a file to your own computer.</li>
+    <li><strong>Copy to clipboard</strong> — places content on your system clipboard.</li>
+    <li><strong>Upload to S3</strong> — sends the current image to the exact presigned URL you
+      paste, directly to the bucket you control; nowhere else.</li>
+    <li><strong>Screen/desktop capture</strong> — uses Chrome's own "choose what to share" picker;
+      the extension only receives what you choose to share.</li>
+  </ul>
+  <p>No other network requests are made.</p>
+
+  <h2>Permissions and why</h2>
+  <ul>
+    <li><code>activeTab</code>, <code>tabs</code>, host access — read the current tab's URL/title and capture the visible page.</li>
+    <li><code>tabCapture</code>, <code>desktopCapture</code>, <code>offscreen</code> — capture/record the screen or a window (via the browser's picker).</li>
+    <li><code>scripting</code> — the in-page selection overlay and full-page stitching.</li>
+    <li><code>storage</code> — hold a capture briefly and store preferences on your device.</li>
+    <li><code>downloads</code> — save exported files.</li>
+    <li><code>clipboardWrite</code> — copy images/text/links when you choose "Copy".</li>
+    <li><code>commands</code> — keyboard shortcuts.</li>
+  </ul>
+
+  <h2>Children's privacy</h2>
+  <p>The extension is a general-purpose tool, not directed at children, and collects no personal
+  information from anyone.</p>
+
+  <h2>Changes</h2>
+  <p>Any changes appear here and on the project website, with an updated date above.</p>
+
+  <h2>Contact</h2>
+  <p>Questions: open an issue at
+  <a href="https://github.com/bronglil/Chrome-extension/issues">github.com/bronglil/Chrome-extension/issues</a>.</p>
+</main>
+</div>
+
+<footer><div class="wrap">SnapShot Studio · <a href="index.html">Home</a> · <a href="https://github.com/bronglil/Chrome-extension">Source</a></div></footer>
+</body>
+</html>
