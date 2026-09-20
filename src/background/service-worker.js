@@ -131,17 +131,20 @@ async function getCaptureTab() {
 }
 
 let jobBusy = false;
+let queuedJob = null;
 async function consumePendingJob(job) {
-  if (!job || jobBusy) return;
+  if (!job) return;
+  if (jobBusy) {
+    queuedJob = job;
+    return;
+  }
   jobBusy = true;
   try {
     await ensureOffscreen().catch(() => {});
     await chrome.storage.session.remove("pendingJob");
     if (job.type === "RECORD") {
       await toggleRecording(job.options || {});
-      return;
-    }
-    if (job.type === "CAPTURE") {
+    } else if (job.type === "CAPTURE") {
       if (job.delayMs) await new Promise((r) => setTimeout(r, job.delayMs));
       await runCapture(job.action);
     }
@@ -150,6 +153,9 @@ async function consumePendingJob(job) {
     showPageError(friendlyError(err));
   } finally {
     jobBusy = false;
+    const next = queuedJob;
+    queuedJob = null;
+    if (next) consumePendingJob(next);
   }
 }
 
@@ -354,12 +360,14 @@ async function captureDesktop(kind) {
   const prefix = chrome.runtime.getURL("src/capture/desktop.html");
   const tabs = await chrome.tabs.query({});
   const existing = tabs.find((t) => (t.url || "").startsWith(prefix));
+  const url = prefix + "?kind=" + encodeURIComponent(kind);
   if (existing) {
+    await chrome.tabs.update(existing.id, { url });
     await chrome.windows.update(existing.windowId, { focused: true });
     return;
   }
   await chrome.windows.create({
-    url: prefix + "?kind=" + encodeURIComponent(kind),
+    url,
     type: "popup",
     width: 380,
     height: 280,
@@ -396,8 +404,15 @@ async function toggleRecording(options = {}) {
   });
   const existing = await findRecorderTab();
   if (existing) {
+    recording = {
+      active: true,
+      pending: !recording.startedAt,
+      startedAt: recording.startedAt || 0,
+      windowId: existing.windowId,
+    };
+    await chrome.storage.local.set({ recordingState: recording });
     await chrome.windows.update(existing.windowId, { focused: true });
-    return { recording: true, startedAt: recording.startedAt };
+    return { recording: true, pending: !!recording.pending, startedAt: recording.startedAt };
   }
 
   const win = await chrome.windows.create({

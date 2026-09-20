@@ -47,16 +47,19 @@ async function ensureSiteAccess() {
 async function refreshRecordingUI() {
   try {
     const state = await send({ type: "GET_RECORDING_STATE" });
-    setRecordingUI(!!state?.recording);
+    setRecordingUI(!!state?.recording && !state?.pending, !!state?.pending);
   } catch (_) {
     /* worker may be asleep; ignore */
   }
 }
 
-function setRecordingUI(active) {
+function setRecordingUI(active, pending = false) {
   const btn = $("#rec-toggle");
-  $("#rec-label").textContent = active ? "Stop recording" : "Start recording";
-  // The dot's shape (circle vs. square) is driven by the .recording CSS class.
+  $("#rec-label").textContent = active
+    ? "Stop recording"
+    : pending
+      ? "Waiting for share…"
+      : "Start recording";
   btn.classList.toggle("recording", active);
   $("#rec-status").hidden = !active;
 }
