@@ -61,7 +61,7 @@ screen recordings, and PDFs — with all processing done locally on the user's
 device.
 
 ## Permission justifications (paste per permission)
-- **activeTab / tabs / host access (`<all_urls>`):** read the current tab's URL
+- **activeTab / host access (`<all_urls>`):** read the current tab's URL
   and title and capture the visible page for screenshots and full-page capture.
 - **tabCapture / desktopCapture / offscreen:** capture and record the screen or a
   window; the offscreen document runs the media APIs MV3 service workers cannot.
