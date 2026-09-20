@@ -39,6 +39,17 @@ export are all vendored locally under `vendor/`.
   it to the clipboard.
 - **QR/barcode** decode via the native `BarcodeDetector` API, falling back to **jsQR**.
 
+### PDF editor & signing
+Open the **Sign / edit PDF** tool from the popup (or drop a `.pdf` onto it):
+- Renders pages with **pdf.js**; navigate multi-page documents.
+- **Add a signature** to a specific spot — draw it, type it (cursive), or upload an
+  image — then drag and resize it exactly where you want it.
+- Also add **text**, **freehand** marks, and a **date stamp**; signatures/marks are
+  kept per page.
+- **Save** with **pdf-lib**: annotations are overlaid onto the *original* pages
+  (the underlying text stays intact — it is not a flattened re-render), exported as
+  `<name>-signed.pdf`.
+
 ### Export
 - **PNG** and **JPEG**.
 - **PDF** via jsPDF — long/full-page images are split across multiple pages.
@@ -63,7 +74,8 @@ src/
                   (MV3 service workers can't touch the DOM or media)
   content/        In-page area-selection overlay + full-page scroll & stitch
   editor/         Konva canvas editor: crop, annotate, OCR, QR, export
-vendor/           konva, jspdf, jsqr, tesseract (core wasm + eng lang data)
+  pdf/            PDF editor: open, sign, annotate, save (pdf.js + pdf-lib)
+vendor/           konva, jspdf, jsqr, tesseract, pdfjs, pdf-lib
 icons/
 test/             Unit tests for src/lib/utils.js (Node built-in runner)
 e2e/              Playwright end-to-end tests (real extension in Chromium)
@@ -173,6 +185,7 @@ Load the **real unpacked extension** into Chromium and drive it:
 | `03-export` | PNG / JPEG / clipboard / multi-page PDF export |
 | `04-capture` | `captureVisibleTab`, **full-page scroll-and-stitch**, area-selection drag (real content script on a served page) |
 | `05-ocr-qr` | Offline **Tesseract OCR** extracts text; **QR decode** returns the value |
+| `06-pdf` | Open a PDF, page navigation, place a typed **signature**, persistence across pages, **export a signed PDF** (valid header, grows vs. original) |
 
 E2E notes:
 - MV3 extensions only load in **headed** Chromium, so `test:e2e` runs under
@@ -191,7 +204,8 @@ E2E notes:
 
 Manifest V3 · vanilla JS (no build step) · **Konva.js** (editor canvas) ·
 **Tesseract.js** (offline OCR) · **jsPDF** (PDF export) · **jsQR** +
-`BarcodeDetector` (codes). All vendored in `vendor/` for offline use.
+`BarcodeDetector` (codes) · **pdf.js** + **pdf-lib** (PDF viewing & signing).
+All vendored in `vendor/` for offline use.
 
 ## 📦 Third-party licenses
 

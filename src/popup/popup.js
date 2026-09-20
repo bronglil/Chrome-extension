@@ -71,6 +71,11 @@ $("#open-editor").addEventListener("click", async () => {
   window.close();
 });
 
+$("#open-pdf").addEventListener("click", async () => {
+  await chrome.tabs.create({ url: chrome.runtime.getURL("src/pdf/pdf-editor.html") });
+  window.close();
+});
+
 // Live recording timer while popup is open.
 let timerInt = null;
 async function tickTimer() {

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SnapShot Studio — PDF Editor</title>
+  <link rel="stylesheet" href="pdf-editor.css" />
+</head>
+<body>
+  <header class="pe-top">
+    <div class="pe-brand">📄 <strong>PDF Editor</strong> <span id="pe-file" class="pe-file"></span></div>
+    <div class="pe-actions">
+      <label class="pe-btn" title="Open a PDF">
+        📂 Open PDF <input type="file" id="pe-open" accept="application/pdf" hidden />
+      </label>
+      <button class="pe-btn" id="pe-save" disabled title="Download the edited PDF">⬇ Save PDF</button>
+    </div>
+  </header>
+
+  <div class="pe-body">
+    <aside class="pe-tools">
+      <button class="pe-tool active" data-tool="select" title="Select / move">🖱️</button>
+      <button class="pe-tool" data-tool="sign" title="Add signature">✍️</button>
+      <button class="pe-tool" data-tool="text" title="Add text">🔡</button>
+      <button class="pe-tool" data-tool="draw" title="Freehand draw">✏️</button>
+      <button class="pe-tool" data-tool="date" title="Stamp today's date">📅</button>
+      <div class="pe-tool-sep"></div>
+      <button class="pe-tool" id="pe-delete" title="Delete selected">🗑️</button>
+    </aside>
+
+    <main class="pe-stage-wrap" id="pe-stage-wrap">
+      <div id="pe-stage"></div>
+      <div class="pe-empty" id="pe-empty">
+        <p>Open a PDF to start.</p>
+        <p class="pe-empty-sub">Drop a .pdf here, or use “Open PDF”. Add a signature, then Save.</p>
+      </div>
+    </main>
+
+    <aside class="pe-panel">
+      <section class="pe-pgroup">
+        <h3>Pages</h3>
+        <div class="pe-pager">
+          <button id="pe-prev" class="pe-pbtn" disabled>‹ Prev</button>
+          <span id="pe-pageinfo">— / —</span>
+          <button id="pe-next" class="pe-pbtn" disabled>Next ›</button>
+        </div>
+      </section>
+      <section class="pe-pgroup">
+        <h3>Style</h3>
+        <label>Color <input type="color" id="pe-color" value="#0b3d91" /></label>
+        <label>Pen <input type="range" id="pe-stroke" min="1" max="12" value="3" /></label>
+        <label>Font <input type="range" id="pe-font" min="10" max="72" value="22" /></label>
+      </section>
+      <section class="pe-pgroup pe-hint">
+        <p>Tip: after adding a signature, drag it onto the right spot and resize with the handles.</p>
+      </section>
+    </aside>
+  </div>
+
+  <!-- Signature capture modal -->
+  <div class="pe-modal" id="pe-sig-modal" hidden>
+    <div class="pe-modal-box">
+      <h3>Add signature</h3>
+      <div class="pe-sig-tabs">
+        <button class="pe-sig-tab active" data-sig="draw">Draw</button>
+        <button class="pe-sig-tab" data-sig="type">Type</button>
+        <button class="pe-sig-tab" data-sig="upload">Upload</button>
+      </div>
+      <div class="pe-sig-pane" data-pane="draw">
+        <canvas id="pe-sigpad" width="460" height="180"></canvas>
+        <button id="pe-sig-clear" class="pe-pbtn">Clear</button>
+      </div>
+      <div class="pe-sig-pane" data-pane="type" hidden>
+        <input id="pe-sig-text" placeholder="Type your name" />
+        <div id="pe-sig-preview" class="pe-sig-preview">Your Signature</div>
+      </div>
+      <div class="pe-sig-pane" data-pane="upload" hidden>
+        <input type="file" id="pe-sig-file" accept="image/*" />
+      </div>
+      <div class="pe-modal-actions">
+        <button id="pe-sig-cancel" class="pe-pbtn">Cancel</button>
+        <button id="pe-sig-add" class="pe-pbtn pe-primary">Place signature</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pe-toast" id="pe-toast" hidden></div>
+  <div class="pe-progress" id="pe-progress" hidden><div class="pe-progress-bar" id="pe-progress-bar"></div><span id="pe-progress-label"></span></div>
+
+  <script src="../../vendor/konva.min.js"></script>
+  <script src="../../vendor/pdfjs/pdf.min.js"></script>
+  <script src="../../vendor/pdf-lib.min.js"></script>
+  <script src="../lib/utils.js"></script>
+  <script src="pdf-editor.js"></script>
+</body>
+</html>
