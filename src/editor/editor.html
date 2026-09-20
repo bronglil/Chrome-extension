@@ -140,10 +140,17 @@
       </section>
 
       <section class="ins" id="upload-panel" hidden>
-        <h3 class="ins__title">S3 upload</h3>
-        <input id="s3-url" class="field" placeholder="Presigned PUT URL" />
-        <button id="btn-upload-go" class="ibtn">Upload PNG</button>
-        <div id="upload-result" class="result">—</div>
+        <h3 class="ins__title">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16l-4-4-4 4M12 12v9"/><path d="M20.4 14.9A5 5 0 0 0 18 5.5a6.5 6.5 0 0 0-12.2 2A4.5 4.5 0 0 0 6 16"/></svg>
+          Upload to S3
+        </h3>
+        <p class="ins__help">Paste a presigned <b>PUT</b> URL for your S3-compatible bucket. The PNG is uploaded and the public link is copied to your clipboard.</p>
+        <input id="s3-url" class="field" placeholder="https://bucket.s3.amazonaws.com/…?X-Amz-Signature=…" />
+        <button id="btn-upload-go" class="ibtn ibtn--primary">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></svg>
+          Upload PNG
+        </button>
+        <div id="upload-result" class="result result--empty">Not uploaded yet</div>
       </section>
     </aside>
   </div>

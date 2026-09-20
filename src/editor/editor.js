@@ -657,19 +657,51 @@ $("#btn-upload").addEventListener("click", () => {
   const p = $("#upload-panel");
   p.hidden = !p.hidden;
 });
+function setUploadResult(state, value) {
+  const el = $("#upload-result");
+  el.className = "result"; // reset
+  if (state === "empty") {
+    el.classList.add("result--empty");
+    el.textContent = value || "Not uploaded yet";
+  } else if (state === "error") {
+    el.classList.add("result--err");
+    el.textContent = value;
+  } else if (state === "ok") {
+    el.classList.add("result--ok");
+    el.innerHTML = "";
+    const a = document.createElement("a");
+    a.href = value; a.target = "_blank"; a.rel = "noopener"; a.textContent = value; a.title = value;
+    const copy = document.createElement("button");
+    copy.className = "result__copy"; copy.title = "Copy link";
+    copy.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    copy.addEventListener("click", () => navigator.clipboard.writeText(value).then(() => toast("Link copied")));
+    el.append(a, copy);
+  }
+}
+
 $("#btn-upload-go").addEventListener("click", async () => {
   const url = $("#s3-url").value.trim();
   if (!url) return toast("Paste a presigned PUT URL");
+  if (!/^https?:\/\//i.test(url)) return toast("That doesn't look like a URL");
+
+  const btn = $("#btn-upload-go");
+  const label = btn.querySelector("span") || btn;
+  btn.classList.add("is-busy");
+  const original = btn.getAttribute("data-label") || "";
   try {
     const blob = await (await fetch(flatten("image/png"))).blob();
     const res = await fetch(url, { method: "PUT", body: blob, headers: { "Content-Type": "image/png" } });
-    if (!res.ok) throw new Error("HTTP " + res.status);
+    if (!res.ok) throw new Error("HTTP " + res.status + " " + res.statusText);
     const publicUrl = url.split("?")[0];
-    $("#upload-result").textContent = publicUrl;
+    setUploadResult("ok", publicUrl);
     await navigator.clipboard.writeText(publicUrl).catch(() => {});
     toast("Uploaded — link copied");
+    void label; void original;
   } catch (e) {
-    $("#upload-result").textContent = "Upload failed: " + e.message;
+    setUploadResult("error", "Upload failed: " + e.message);
+    toast("Upload failed");
+  } finally {
+    btn.classList.remove("is-busy");
   }
 });
 
