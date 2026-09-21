@@ -39,18 +39,25 @@ test.describe("Clipboard history", () => {
       const tabs = await chrome.tabs.query({});
       return (tabs.find((t) => (t.url || "").includes(part)) || {}).id;
     }, "tall-page.html");
+    expect(tabId).toBeTruthy();
 
-    await (await sw(context)).evaluate(async (tabId) => {
-      await chrome.storage.session.set({ clipHistory: ["alpha copy", "beta copy"] });
+    const items = ["alpha copy", "beta copy"];
+    await (await sw(context)).evaluate(async ({ tabId, items }) => {
+      await chrome.storage.session.setAccessLevel({
+        accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS",
+      }).catch(() => {});
+      await chrome.storage.session.set({ clipHistory: items });
       await chrome.scripting.executeScript({
         target: { tabId },
         files: ["src/content/clip-history.js"],
       });
-      await chrome.tabs.sendMessage(tabId, { type: "SHOW_CLIP_PICKER" });
-    }, tabId);
+      await chrome.tabs.sendMessage(tabId, { type: "SHOW_CLIP_PICKER", items });
+    }, { tabId, items });
 
-    await expect(page.locator("#snapshot-clip-host")).toBeAttached();
-    await expect(page.locator("#snapshot-clip-host .row")).toHaveCount(2);
-    await expect(page.locator("#snapshot-clip-host .t").first()).toHaveText("alpha copy");
+    const host = page.locator("#snapshot-clip-host");
+    await expect(host).toBeAttached();
+    // Rows live in an open shadow root; chained locators pierce it.
+    await expect(host.locator(".row")).toHaveCount(2);
+    await expect(host.locator(".t").first()).toHaveText("alpha copy");
   });
 });

@@ -102,6 +102,11 @@ async function localSet(obj) {
 
 const storageReady = purgeStorage();
 
+// Content scripts cannot read chrome.storage.session unless we opt them in.
+const sessionPagesReady = chrome.storage.session
+  .setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" })
+  .catch((e) => console.warn("[SnapShot] session access", e));
+
 async function stashAndOpenEditor(dataUrl, meta = {}) {
   await storageReady;
   const id = shortId();
@@ -329,12 +334,17 @@ const CLIP_SCRIPT = {
   persistAcrossSessions: true,
 };
 
+async function clipList() {
+  await sessionPagesReady;
+  const { clipHistory } = await chrome.storage.session.get(CLIP_KEY);
+  return Array.isArray(clipHistory) ? clipHistory : [];
+}
+
 async function rememberClip(text) {
   const t = String(text || "").trim();
   if (!t) return;
   const clipped = t.length > 8000 ? t.slice(0, 8000) : t;
-  const { clipHistory } = await chrome.storage.session.get(CLIP_KEY);
-  const list = Array.isArray(clipHistory) ? clipHistory : [];
+  const list = await clipList();
   await chrome.storage.session.set({
     [CLIP_KEY]: [clipped, ...list.filter((x) => x !== clipped)].slice(0, CLIP_MAX),
   });
@@ -350,14 +360,15 @@ async function syncClipHistory() {
 async function showClipPicker() {
   const tab = await getActiveTab();
   if (!isCapturable(tab)) return;
+  const payload = { type: "SHOW_CLIP_PICKER", items: await clipList() };
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: "SHOW_CLIP_PICKER" });
+    await chrome.tabs.sendMessage(tab.id, payload);
   } catch (_) {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: CLIP_SCRIPT.js,
     });
-    await chrome.tabs.sendMessage(tab.id, { type: "SHOW_CLIP_PICKER" }).catch(() => {});
+    await chrome.tabs.sendMessage(tab.id, payload).catch(() => {});
   }
 }
 
@@ -626,6 +637,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case "CLIP_REMEMBER":
           await rememberClip(msg.text);
           sendResponse({ ok: true });
+          break;
+        case "GET_CLIP_HISTORY":
+          sendResponse({ items: await clipList() });
           break;
         case "RUN_PENDING":
           consumePendingJob(msg.job || (await chrome.storage.session.get("pendingJob")).pendingJob);

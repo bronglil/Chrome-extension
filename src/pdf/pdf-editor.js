@@ -232,6 +232,15 @@ async function mountPage(num, container) {
   const transformer = new Konva.Transformer({ rotateEnabled: true, ignoreStroke: true });
   overlayLayer.add(transformer);
   baseLayer.draw();
+  const content = stage.container().querySelector(".konvajs-content");
+  if (content) {
+    content.style.width = displayW + "px";
+    content.style.height = displayH + "px";
+  }
+  stage.container().querySelectorAll("canvas").forEach((c) => {
+    c.style.width = displayW + "px";
+    c.style.height = displayH + "px";
+  });
 
   const view = {
     num, el: container.closest(".pe-page"),
@@ -616,12 +625,10 @@ function bindStage(view) {
       }
       return;
     }
-    if (state.tool === "pen" || state.tool === "highlight") startDraw();
+    if (state.tool === "pen" || state.tool === "highlight") startDraw(e);
   });
-  stage.on("mousemove.pdfed touchmove.pdfed", () => { if (state.drawing) extendDraw(); });
-  stage.on("mouseup.pdfed touchend.pdfed", () => {
-    if (state.drawing) { state.drawing.node.draggable(true); state.drawing = null; }
-  });
+  stage.on("mousemove.pdfed touchmove.pdfed", (e) => { if (state.drawing) extendDraw(e); });
+  stage.on("mouseup.pdfed touchend.pdfed", endDraw);
 
   stage.on("click.pdfed tap.pdfed", (e) => {
     const existing = findTextNode(e.target);
@@ -633,7 +640,7 @@ function bindStage(view) {
         editText(existing);
         return;
       }
-      addTextAt(pointer());
+      addTextAt(pointer(e));
       return;
     }
     if (state.tool !== "select") return;
@@ -654,11 +661,52 @@ function bindStage(view) {
   });
 }
 
-function pointer() { return state.stage.getPointerPosition(); }
+function pointer(evt, stage = state.stage) {
+  if (!stage) return null;
+  const el = stage.container().querySelector("canvas") || stage.container();
+  const box = el.getBoundingClientRect();
+  if (!box.width || !box.height) return stage.getPointerPosition();
+  const native = evt && evt.evt ? evt.evt : evt;
+  let cx, cy;
+  if (native && native.touches && native.touches[0]) {
+    cx = native.touches[0].clientX;
+    cy = native.touches[0].clientY;
+  } else if (native && native.changedTouches && native.changedTouches[0]) {
+    cx = native.changedTouches[0].clientX;
+    cy = native.changedTouches[0].clientY;
+  } else if (native && typeof native.clientX === "number") {
+    cx = native.clientX;
+    cy = native.clientY;
+  }
+  if (typeof cx !== "number") return stage.getPointerPosition();
+  return {
+    x: ((cx - box.left) / box.width) * stage.width(),
+    y: ((cy - box.top) / box.height) * stage.height(),
+  };
+}
+
+function onDocDrawMove(e) {
+  if (e.cancelable && e.type === "touchmove") e.preventDefault();
+  if (state.drawing) extendDraw(e);
+}
+function onDocDrawUp() {
+  endDraw();
+}
+
+function endDraw() {
+  if (state.drawing) {
+    try { state.drawing.node.draggable(true); } catch (_) { /* ignore */ }
+    state.drawing = null;
+  }
+  window.removeEventListener("mousemove", onDocDrawMove, true);
+  window.removeEventListener("mouseup", onDocDrawUp, true);
+  window.removeEventListener("touchmove", onDocDrawMove, true);
+  window.removeEventListener("touchend", onDocDrawUp, true);
+}
 
 // ---- Pen & highlighter -----------------------------------------------------
-function startDraw() {
-  const p = pointer();
+function startDraw(evt) {
+  const p = pointer(evt);
   if (!p) return;
   const isHi = state.tool === "highlight";
   const node = new Konva.Line({
@@ -675,9 +723,13 @@ function startDraw() {
   });
   state.overlayLayer.add(node);
   state.drawing = { node };
+  window.addEventListener("mousemove", onDocDrawMove, true);
+  window.addEventListener("mouseup", onDocDrawUp, true);
+  window.addEventListener("touchmove", onDocDrawMove, { capture: true, passive: false });
+  window.addEventListener("touchend", onDocDrawUp, true);
 }
-function extendDraw() {
-  const p = pointer();
+function extendDraw(evt) {
+  const p = pointer(evt);
   if (!p || !state.drawing) return;
   state.drawing.node.points(state.drawing.node.points().concat([p.x, p.y]));
   state.overlayLayer.batchDraw();

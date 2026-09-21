@@ -14,6 +14,10 @@
     if (!t) return;
     const clipped = t.length > 8000 ? t.slice(0, 8000) : t;
     try {
+      const res = await chrome.runtime.sendMessage({ type: "CLIP_REMEMBER", text: clipped });
+      if (res?.ok) return;
+    } catch (_) { /* SW asleep — write session directly */ }
+    try {
       const { clipHistory } = await chrome.storage.session.get(KEY);
       const list = Array.isArray(clipHistory) ? clipHistory : [];
       const next = [clipped, ...list.filter((x) => x !== clipped)].slice(0, 5);
@@ -24,10 +28,13 @@
   async function list() {
     try {
       const { clipHistory } = await chrome.storage.session.get(KEY);
-      return Array.isArray(clipHistory) ? clipHistory : [];
-    } catch (_) {
-      return [];
-    }
+      if (Array.isArray(clipHistory)) return clipHistory;
+    } catch (_) { /* content scripts need session access-level */ }
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "GET_CLIP_HISTORY" });
+      if (Array.isArray(res?.items)) return res.items;
+    } catch (_) { /* ignore */ }
+    return [];
   }
 
   function selectedText() {
@@ -73,12 +80,12 @@
     insertAtFocus(text);
   }
 
-  async function showPicker() {
+  async function showPicker(passedItems) {
     if (!TOP) return;
     if (Date.now() - pickerAt < 400) return;
     pickerAt = Date.now();
     hidePicker();
-    const items = await list();
+    const items = Array.isArray(passedItems) ? passedItems : await list();
     const host = document.createElement("div");
     host.id = HOST_ID;
     host.style.cssText = "all:initial;position:fixed;inset:0;z-index:2147483647;";
@@ -166,7 +173,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     if (msg?.type === "SHOW_CLIP_PICKER") {
-      showPicker().then(() => sendResponse({ ok: true }));
+      showPicker(msg.items).then(() => sendResponse({ ok: true }));
       return true;
     }
     if (msg?.type === "CLIP_REMEMBER") {

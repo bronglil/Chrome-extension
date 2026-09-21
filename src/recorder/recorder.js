@@ -23,6 +23,7 @@ const state = {
   recorder: null,
   chunks: [],
   composeTimer: 0,
+  composing: false,
   startedAt: 0,
   clock: 0,
   canvas: null,
@@ -88,6 +89,16 @@ function isRecorderSelfCapture(stream) {
 }
 
 async function getDisplayStream(wantAudio) {
+  // E2E / fake-device path: skip the native picker (it cannot be driven in tests).
+  if (params.get("fake") === "1") {
+    if (navigator.mediaDevices.getDisplayMedia) {
+      return navigator.mediaDevices.getDisplayMedia({ video: true, audio: !!wantAudio });
+    }
+    return navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user" },
+      audio: !!wantAudio,
+    });
+  }
   // Use Chrome's desktop picker from this page so the stream is the screen /
   // window / tab the user chose — not this Recording window.
   // getDisplayMedia on chrome-extension:// pages often captures this tab.
@@ -164,26 +175,72 @@ async function attachPreview(el, stream) {
 }
 
 function waitMeta(video) {
-  if (video.readyState >= 2 && video.videoWidth) return Promise.resolve();
-  return new Promise((resolve) => {
+  if (video.readyState >= 2 && video.videoWidth > 2) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const fail = setTimeout(() => {
+      cleanup();
+      if (video.videoWidth > 2) resolve();
+      else reject(new Error("Screen preview never started — pick a screen, window, or tab again."));
+    }, 8000);
     const done = () => {
+      if (video.videoWidth <= 2) return;
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      clearTimeout(fail);
       video.removeEventListener("loadeddata", done);
       video.removeEventListener("playing", done);
-      resolve();
     };
     video.addEventListener("loadeddata", done);
     video.addEventListener("playing", done);
-    setTimeout(done, 1200);
+    if (typeof video.requestVideoFrameCallback === "function") {
+      video.requestVideoFrameCallback(() => done());
+    }
   });
 }
 
-function videoForRecord(display) {
-  const track = display.getVideoTracks()[0];
-  if (!track) return new MediaStream();
-  track.enabled = true;
-  const clone = track.clone();
-  state.recordClones.push(clone);
-  return new MediaStream([clone]);
+function sampleLuma(video) {
+  const w = Math.min(160, video.videoWidth | 0);
+  const h = Math.min(90, video.videoHeight | 0);
+  if (!w || !h) return { mean: 0, max: 0, w: 0, h: 0 };
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  let sum = 0;
+  let max = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const y = data[i] + data[i + 1] + data[i + 2];
+    sum += y;
+    if (y > max) max = y;
+  }
+  const n = data.length / 4;
+  return { mean: sum / n / 3, max: max / 3, w: video.videoWidth, h: video.videoHeight };
+}
+
+async function waitLivePreview(video) {
+  await waitMeta(video);
+  for (let i = 0; i < 12; i++) {
+    const s = sampleLuma(video);
+    if (s.w > 2 && s.max > 8) return s;
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  const s = sampleLuma(video);
+  if (s.w > 2 && s.max > 4) return s;
+  throw new Error("Shared screen is blank. Pick a different screen, window, or tab — not this Recording window.");
+}
+
+// Record what the preview is showing. Cloning a desktop-capture track often
+// yields a black saved video while the <video> preview still has frames.
+function videoForRecord(screenEl, camEl) {
+  if (camEl && camEl.videoWidth) return startComposer(screenEl, camEl);
+  if (typeof screenEl.captureStream === "function") {
+    return screenEl.captureStream(24);
+  }
+  return startComposer(screenEl, null);
 }
 
 function drawPip(ctx, cam, W, H) {
@@ -211,18 +268,21 @@ function drawPip(ctx, cam, W, H) {
 
 function startComposer(screenEl, camEl) {
   const canvas = document.createElement("canvas");
-  canvas.width = screenEl.videoWidth || 1920;
-  canvas.height = screenEl.videoHeight || 1080;
+  canvas.width = Math.max(2, screenEl.videoWidth || 1280);
+  canvas.height = Math.max(2, screenEl.videoHeight || 720);
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
   state.canvas = canvas;
+  state.composing = true;
 
   const fps = 24;
   const tick = () => {
-    if (!state.recorder) return;
+    if (!state.composing) return;
     ctx.drawImage(screenEl, 0, 0, canvas.width, canvas.height);
-    if (camEl && camEl.readyState >= 2) drawPip(ctx, camEl, canvas.width, canvas.height);
+    if (camEl && camEl.readyState >= 2 && camEl.videoWidth) {
+      drawPip(ctx, camEl, canvas.width, canvas.height);
+    }
   };
   tick();
   state.composeTimer = setInterval(tick, 1000 / fps);
@@ -250,7 +310,7 @@ async function start() {
 
   const screenEl = $("#screen-preview");
   await attachPreview(screenEl, state.display);
-  await waitMeta(screenEl);
+  await waitLivePreview(screenEl);
   $("#screen-empty").hidden = true;
   screenEl.classList.add("is-live");
 
@@ -285,9 +345,10 @@ async function start() {
 
   flags();
 
-  const videoStream = opts.camera && state.camera
-    ? startComposer(screenEl, $("#cam-preview"))
-    : videoForRecord(state.display);
+  const videoStream = videoForRecord(
+    screenEl,
+    opts.camera && state.camera ? $("#cam-preview") : null
+  );
 
   state.mixedAudio = mixAudio([state.display, state.mic]);
   const tracks = [...videoStream.getVideoTracks()];
@@ -365,6 +426,7 @@ function waitForDownload(id) {
 async function finalize() {
   if (state.finalizing) return;
   state.finalizing = true;
+  state.composing = false;
   clearInterval(state.composeTimer);
   clearInterval(state.clock);
   const blob = new Blob(state.chunks, { type: "video/webm" });
@@ -406,6 +468,7 @@ function stopAll() {
   [state.display, state.camera, state.mic].forEach((s) => {
     try { s?.getTracks().forEach((t) => t.stop()); } catch (_) { /* already ended */ }
   });
+  state.composing = false;
   state.recordClones.forEach((t) => { try { t.stop(); } catch (_) { /* already ended */ } });
   state.recordClones = [];
   try { state.audioCtx?.close(); } catch (_) { /* ignore */ }
