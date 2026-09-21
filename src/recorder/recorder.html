@@ -7,45 +7,88 @@
   <link rel="stylesheet" href="recorder.css" />
 </head>
 <body>
-  <header class="bar">
-    <img class="bar__logo" src="../../icons/icon48.png" width="28" height="28" alt="" />
-    <div class="bar__text">
-      <strong>Recording</strong>
-      <span id="status-label">Ready when you are</span>
-    </div>
-    <div class="bar__live" id="live-chip" hidden>
-      <span class="bar__pulse"></span>
-      <span id="rec-clock">00:00</span>
-    </div>
-  </header>
+  <div class="studio" id="studio">
+    <header class="top">
+      <div class="brand">
+        <img class="brand__logo" src="../../icons/icon48.png" width="28" height="28" alt="" />
+        <div class="brand__copy">
+          <strong>SnapShot Studio</strong>
+          <span id="status-label">Ready to record</span>
+        </div>
+      </div>
+      <div class="live-pill" id="live-chip" hidden>
+        <span class="live-pill__dot"></span>
+        <span id="rec-clock">00:00</span>
+      </div>
+    </header>
 
-  <main class="stage">
-    <div class="screen-wrap">
-      <video id="screen-preview" autoplay muted playsinline></video>
-      <p class="screen-empty" id="screen-empty">Start recording anytime. Share a screen, window, or tab when you want it in the video — pick that page, not this window.</p>
-    </div>
+    <main class="stage">
+      <div class="preview" id="preview">
+        <video id="screen-preview" autoplay muted playsinline></video>
+        <div class="preview__empty" id="screen-empty">
+          <div class="preview__orb" aria-hidden="true"></div>
+          <h1 class="preview__title">Capture anything</h1>
+          <p class="preview__sub">Start with a 3-second countdown. Share your screen anytime — during or before recording.</p>
+        </div>
+        <section class="pip" id="person-panel" hidden>
+          <video id="cam-preview" autoplay muted playsinline></video>
+          <span class="pip__tag">You</span>
+        </section>
+      </div>
+    </main>
 
-    <section class="person" id="person-panel" hidden>
-      <video id="cam-preview" autoplay muted playsinline></video>
-      <span class="person__tag">You</span>
-    </section>
-    <p class="person-off" id="person-off" hidden>Camera is off</p>
-  </main>
+    <footer class="controls" id="controls">
+      <div class="chips" id="flags"></div>
 
-  <footer class="dock">
-    <div class="flags" id="flags"></div>
-    <div class="dock__row">
-      <button class="share" id="btn-share" type="button">Share screen</button>
-      <button class="ghost" id="btn-unshare" type="button" hidden>Remove screen</button>
-    </div>
-    <button class="start" id="btn-start" type="button">Start recording</button>
-    <button class="stop" id="btn-stop" type="button" disabled hidden>
-      <span class="stop__sq"></span>
-      Stop &amp; save
-    </button>
-  </footer>
+      <div class="actions" id="actions-ready">
+        <button class="btn btn--ghost" id="btn-share" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+          <span id="share-label">Share screen</span>
+        </button>
+        <button class="btn btn--ghost" id="btn-unshare" type="button" hidden>
+          Remove screen
+        </button>
+        <button class="btn btn--primary" id="btn-start" type="button">
+          <span class="btn__rec"></span>
+          Start recording
+        </button>
+      </div>
+
+      <div class="actions actions--live" id="actions-live" hidden>
+        <button class="btn btn--ghost" id="btn-share-live" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+          <span id="share-label-live">Share</span>
+        </button>
+        <button class="btn btn--stop" id="btn-stop" type="button">
+          <span class="btn__sq"></span>
+          Stop &amp; save
+        </button>
+      </div>
+
+      <p class="footnote" id="person-off">Camera stays optional. Mic and system audio follow your popup choices.</p>
+    </footer>
+  </div>
 
   <div class="toast" id="toast" hidden></div>
+
+  <div class="countdown" id="countdown" hidden>
+    <div class="countdown__veil"></div>
+    <div class="countdown__core">
+      <div class="countdown__ring" aria-hidden="true"></div>
+      <span class="countdown__num" id="countdown-num">3</span>
+      <p class="countdown__hint" id="countdown-hint">Get ready</p>
+      <button class="countdown__cancel" id="btn-cancel-count" type="button">Cancel</button>
+    </div>
+  </div>
+
+  <div class="saving" id="saving" hidden>
+    <div class="saving__card">
+      <div class="saving__spin" aria-hidden="true"></div>
+      <p class="saving__title" id="saving-title">Saving your recording…</p>
+      <p class="saving__sub">This window closes automatically</p>
+    </div>
+  </div>
+
   <script src="recorder.js"></script>
 </body>
 </html>

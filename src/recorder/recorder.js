@@ -36,6 +36,10 @@ const state = {
   finalizing: false,
   sharing: false,
   starting: false,
+  pickerReqId: null,
+  picking: false,
+  saved: false,
+  countdownTimer: 0,
 };
 
 function toast(msg, ms = 2400) {
@@ -51,27 +55,64 @@ function setStatus(text) {
 }
 
 function flags() {
-  const bits = [];
-  bits.push(state.sharing ? "Screen shared" : "No screen yet");
-  bits.push(opts.camera && state.camera ? "Camera" : "No camera");
-  bits.push(opts.mic && state.mic ? "Microphone" : "No mic");
-  bits.push(opts.systemAudio && state.display?.getAudioTracks().length ? "System audio" : "No system audio");
-  $("#flags").innerHTML = bits.map((b) => `<span class="flag">${b}</span>`).join("");
+  const bits = [
+    { label: state.sharing ? "Screen on" : "No screen", on: state.sharing, live: state.sharing },
+    { label: opts.camera && state.camera ? "Camera on" : "Camera off", on: !!(opts.camera && state.camera) },
+    { label: opts.mic && state.mic ? "Mic on" : "Mic off", on: !!(opts.mic && state.mic) },
+    {
+      label: opts.systemAudio && state.display?.getAudioTracks().length ? "System audio" : "No system audio",
+      on: !!(opts.systemAudio && state.display?.getAudioTracks().length),
+    },
+  ];
+  $("#flags").innerHTML = bits.map((b) => {
+    const cls = ["flag", b.on ? "is-on" : "", b.live ? "is-live" : ""].filter(Boolean).join(" ");
+    return `<span class="${cls}">${b.label}</span>`;
+  }).join("");
 }
 
 function syncShareButtons() {
-  $("#btn-share").textContent = state.sharing ? "Change screen" : "Share screen";
-  $("#btn-unshare").hidden = !state.sharing;
+  const label = state.sharing ? "Change screen" : "Share screen";
+  const liveLabel = state.sharing ? "Change" : "Share";
+  const share = $("#btn-share");
+  const shareLive = $("#btn-share-live");
+  const shareLabel = $("#share-label");
+  const shareLabelLive = $("#share-label-live");
+  if (shareLabel) shareLabel.textContent = label;
+  else if (share) share.textContent = label;
+  if (shareLabelLive) shareLabelLive.textContent = liveLabel;
+  $("#btn-unshare").hidden = !state.sharing || !!state.startedAt;
   $("#screen-empty").hidden = state.sharing;
   $("#screen-preview").classList.toggle("is-live", state.sharing);
 }
 
+function setLiveUi(live) {
+  document.body.classList.toggle("is-live", live);
+  $("#live-chip").hidden = !live;
+  $("#actions-ready").hidden = live;
+  $("#actions-live").hidden = !live;
+  $("#btn-stop").disabled = !live;
+  if (live) {
+    $("#btn-start").hidden = true;
+    $("#person-off").hidden = true;
+  }
+}
+
 function liveStatus() {
-  if (!state.startedAt) return setStatus("Ready when you are");
-  if (state.sharing && opts.camera && state.camera) return setStatus("Screen + camera");
-  if (state.sharing) return setStatus("Screen is in the video");
-  if (opts.camera && state.camera) return setStatus("Camera only — share a screen anytime");
-  setStatus("Recording — share a screen anytime");
+  if (state.starting && !state.startedAt) return setStatus("Countdown…");
+  if (!state.startedAt) return setStatus("Ready to record");
+  if (state.sharing && opts.camera && state.camera) return setStatus("Screen + camera · live");
+  if (state.sharing) return setStatus("Screen shared · live");
+  if (opts.camera && state.camera) return setStatus("Camera only · share anytime");
+  setStatus("Recording · share a screen anytime");
+}
+
+function cancelSharePicker() {
+  const id = state.pickerReqId;
+  state.pickerReqId = null;
+  state.picking = false;
+  if (id != null && chrome.desktopCapture?.cancelChooseDesktopMedia) {
+    try { chrome.desktopCapture.cancelChooseDesktopMedia(id); } catch (_) { /* ignore */ }
+  }
 }
 
 function pickDesktop(wantAudio) {
@@ -81,10 +122,18 @@ function pickDesktop(wantAudio) {
     }
     const sources = ["screen", "window", "tab"];
     if (wantAudio) sources.push("audio");
-    chrome.desktopCapture.chooseDesktopMedia(sources, (id) => {
+    state.picking = true;
+    const reqId = chrome.desktopCapture.chooseDesktopMedia(sources, (id) => {
+      if (state.pickerReqId === reqId) state.pickerReqId = null;
+      state.picking = false;
+      if (state.finalizing || !state.startedAt) {
+        reject(new Error("Capture cancelled."));
+        return;
+      }
       if (!id) reject(new Error("Capture cancelled."));
       else resolve(id);
     });
+    state.pickerReqId = reqId;
   });
 }
 
@@ -126,8 +175,8 @@ async function setWin(mode) {
       return;
     }
     const size = mode === "controls"
-      ? { width: 380, height: 240 }
-      : { width: 420, height: 620 };
+      ? { width: 360, height: 280 }
+      : { width: 420, height: 640 };
     await chrome.windows.update(win.id, {
       state: "normal",
       focused: mode !== "controls",
@@ -394,32 +443,119 @@ async function attachDisplay(stream) {
 }
 
 async function shareScreen() {
-  $("#btn-share").disabled = true;
+  if (state.finalizing || state.picking || state.starting) return;
+  const shareBtns = [$("#btn-share"), $("#btn-share-live")].filter(Boolean);
+  shareBtns.forEach((b) => { b.disabled = true; });
   try {
     const stream = await getDisplayStream(opts.systemAudio);
+    if (state.finalizing) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
     await attachDisplay(stream);
     if (state.startedAt) await setWin("controls");
-    toast(state.sharing ? "Screen is in the recording." : "Screen shared.");
+    toast(state.startedAt ? "Screen is in the recording." : "Screen ready — hit Start when you are.");
   } catch (err) {
+    if (state.finalizing) return;
     const cancelled = /cancell|denied|abort|NotAllowed|not this Recording/i.test((err?.name || "") + (err?.message || ""));
     toast(cancelled
       ? (err.message && /not this Recording/i.test(err.message)
         ? err.message
-        : "Nothing was shared — recording is still going.")
+        : (state.startedAt ? "Nothing was shared — recording continues." : "Share cancelled."))
       : (err.message || String(err)));
     if (!cancelled) console.warn("[SnapShot] share", err);
   } finally {
-    $("#btn-share").disabled = false;
+    if (!state.finalizing) shareBtns.forEach((b) => { b.disabled = false; });
   }
+}
+
+function hideCountdown() {
+  clearTimeout(state.countdownTimer);
+  state.countdownTimer = 0;
+  const el = $("#countdown");
+  if (el) el.hidden = true;
+  document.body.classList.remove("is-counting");
+}
+
+function runCountdown(seconds = 3) {
+  if (params.get("countdown") === "0" || params.get("fake") === "1") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const root = $("#countdown");
+    const num = $("#countdown-num");
+    const hint = $("#countdown-hint");
+    if (!root || !num) return resolve();
+
+    document.body.classList.add("is-counting");
+    root.hidden = false;
+    let left = Math.max(1, seconds | 0);
+    let settled = false;
+
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      hideCountdown();
+      if (ok) resolve();
+      else reject(new Error("Capture cancelled."));
+    };
+
+    const tick = () => {
+      if (state.finalizing) return finish(false);
+      if (left > 0) {
+        num.textContent = String(left);
+        num.classList.remove("is-go");
+        num.style.animation = "none";
+        void num.offsetWidth;
+        num.style.animation = "";
+        if (hint) {
+          hint.textContent = left === 3 ? "Get ready" : left === 2 ? "Looking good" : "Almost there";
+        }
+        setStatus(`Starting in ${left}…`);
+        left -= 1;
+        state.countdownTimer = setTimeout(tick, 1000);
+        return;
+      }
+      num.textContent = "GO";
+      num.classList.add("is-go");
+      num.style.animation = "none";
+      void num.offsetWidth;
+      num.style.animation = "";
+      if (hint) hint.textContent = "You're live";
+      setStatus("Starting…");
+      state.countdownTimer = setTimeout(() => finish(true), 480);
+    };
+    tick();
+  });
 }
 
 async function start() {
   if (state.recorder || state.finalizing || state.starting) return;
   state.starting = true;
   $("#btn-start").disabled = true;
-  setStatus("Starting…");
+  $("#btn-start").hidden = true;
+  setStatus("Get ready…");
   state.finalizing = false;
+  state.saved = false;
   state.chunks = [];
+  chrome.runtime.sendMessage({ type: "RECORDING_COUNTDOWN" }).catch(() => {});
+
+  try {
+    await runCountdown(3);
+  } catch (_) {
+    state.starting = false;
+    setLiveUi(false);
+    $("#btn-start").hidden = false;
+    $("#btn-start").disabled = false;
+    const note = $("#person-off");
+    if (note) note.hidden = false;
+    liveStatus();
+    return;
+  }
+  if (state.finalizing) {
+    state.starting = false;
+    return;
+  }
 
   if (opts.camera) {
     try {
@@ -431,13 +567,14 @@ async function start() {
       console.warn("[SnapShot] camera", err);
       opts.camera = false;
       $("#person-panel").hidden = true;
-      $("#person-off").hidden = false;
       toast("Camera unavailable — continuing without it.");
     }
   } else {
     $("#person-panel").hidden = true;
-    $("#person-off").hidden = false;
   }
+
+  const note = $("#person-off");
+  if (note) note.hidden = true;
 
   const wantAudio = !!(opts.mic || opts.systemAudio);
   if (wantAudio) ensureAudioMix();
@@ -475,16 +612,13 @@ async function start() {
 
   state.recorder.start(1000);
   state.startedAt = Date.now();
-  document.body.classList.add("is-live");
-  $("#live-chip").hidden = false;
-  $("#btn-start").hidden = true;
-  $("#btn-stop").hidden = false;
-  $("#btn-stop").disabled = false;
+  setLiveUi(true);
   flags();
   liveStatus();
   tickClock();
   state.clock = setInterval(tickClock, 500);
   chrome.runtime.sendMessage({ type: "RECORDING_STARTED", startedAt: state.startedAt }).catch(() => {});
+  await setWin("controls");
   state.starting = false;
 }
 
@@ -502,10 +636,36 @@ function tickClock() {
 
 function stop() {
   if (state.finalizing) return;
+  // Allow cancel during the 3-2-1 countdown.
+  if (state.starting && !state.recorder) {
+    state.finalizing = true;
+    hideCountdown();
+    state.starting = false;
+    stopAll();
+    chrome.runtime.sendMessage({ type: "RECORDING_CANCELLED" }).catch(() => {});
+    closeRecorderWindow();
+    return;
+  }
+  state.finalizing = true;
+  hideCountdown();
+  showSaving("Saving your recording…");
   $("#btn-stop").disabled = true;
   setStatus("Saving…");
-  if (state.recorder && state.recorder.state !== "inactive") state.recorder.stop();
-  else finalize();
+  cancelSharePicker();
+  stopDisplayTracks();
+  if (state.recorder && state.recorder.state !== "inactive") {
+    try { state.recorder.stop(); } catch (_) { finalize(); }
+  } else {
+    finalize();
+  }
+}
+
+function showSaving(title) {
+  const el = $("#saving");
+  const t = $("#saving-title");
+  if (t && title) t.textContent = title;
+  if (el) el.hidden = false;
+  document.body.classList.add("is-saving");
 }
 
 function waitForDownload(id) {
@@ -527,21 +687,33 @@ function waitForDownload(id) {
   });
 }
 
+function closeRecorderWindow() {
+  // Prefer SW remove — popup windows often ignore window.close().
+  chrome.runtime.sendMessage({ type: "CLOSE_RECORDER" }).catch(() => {
+    try { window.close(); } catch (_) { /* ignore */ }
+  });
+}
+
 async function finalize() {
-  if (state.finalizing) return;
+  if (state.saved) return;
+  state.saved = true;
   state.finalizing = true;
+  cancelSharePicker();
   state.composing = false;
   clearInterval(state.composeTimer);
   clearInterval(state.clock);
-  const blob = new Blob(state.chunks, { type: "video/webm" });
+  const blob = new Blob(state.chunks || [], { type: "video/webm" });
+  state.chunks = [];
   stopAll();
   chrome.runtime.sendMessage({ type: "RECORDING_DONE" }).catch(() => {});
   if (!blob.size) {
+    showSaving("Nothing was recorded");
     setStatus("Nothing was recorded");
-    toast("Recording was empty — click Start recording to try again.");
-    resetUi();
+    toast("Recording was empty — closing…");
+    setTimeout(closeRecorderWindow, 800);
     return;
   }
+  showSaving("Saving your recording…");
   const url = URL.createObjectURL(blob);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   try {
@@ -551,21 +723,24 @@ async function finalize() {
       saveAs: params.get("saveAs") !== "0",
     });
     await waitForDownload(downloadId);
+    showSaving("Saved — closing…");
     setStatus("Saved");
-    setTimeout(() => window.close(), 600);
+    setTimeout(closeRecorderWindow, 450);
   } catch (err) {
+    showSaving("Save failed");
     setStatus("Save failed");
     toast("Save failed: " + (err.message || err));
-    resetUi();
+    setTimeout(closeRecorderWindow, 1400);
   }
 }
 
 function resetUi() {
-  document.body.classList.remove("is-live");
-  $("#btn-stop").hidden = true;
+  document.body.classList.remove("is-live", "is-saving", "is-counting");
+  setLiveUi(false);
   $("#btn-start").hidden = false;
   $("#btn-start").disabled = false;
   $("#btn-share").disabled = false;
+  $("#saving").hidden = true;
   state.finalizing = false;
   state.startedAt = 0;
   state.sharing = false;
@@ -575,6 +750,7 @@ function resetUi() {
 }
 
 function stopAll() {
+  cancelSharePicker();
   [state.display, state.camera, state.mic].forEach((s) => {
     try { s?.getTracks().forEach((t) => t.stop()); } catch (_) { /* already ended */ }
   });
@@ -583,6 +759,13 @@ function stopAll() {
   state.mic = null;
   state.composing = false;
   state.sharing = false;
+  try {
+    const preview = $("#screen-preview");
+    if (preview) {
+      preview.srcObject = null;
+      preview.classList.remove("is-live");
+    }
+  } catch (_) { /* ignore */ }
   try { state.audioCtx?.close(); } catch (_) { /* ignore */ }
   state.audioCtx = null;
   state.mixDest = null;
@@ -597,6 +780,8 @@ chrome.runtime.onMessage.addListener((msg) => {
 $("#btn-start").addEventListener("click", () => {
   start().catch((err) => {
     state.starting = false;
+    setLiveUi(false);
+    $("#btn-start").hidden = false;
     $("#btn-start").disabled = false;
     chrome.runtime.sendMessage({ type: "RECORDING_CANCELLED", error: err.message }).catch(() => {});
     setStatus("Could not start");
@@ -604,11 +789,15 @@ $("#btn-start").addEventListener("click", () => {
   });
 });
 $("#btn-share").addEventListener("click", () => { shareScreen(); });
+$("#btn-share-live")?.addEventListener("click", () => { shareScreen(); });
 $("#btn-unshare").addEventListener("click", () => {
   stopDisplayTracks();
-  toast("Screen removed — recording is still going.");
+  toast("Screen removed — recording continues.");
 });
 $("#btn-stop").addEventListener("click", stop);
+$("#btn-cancel-count")?.addEventListener("click", () => {
+  if (state.starting && !state.recorder) stop();
+});
 window.addEventListener("beforeunload", () => {
   if (state.recorder && state.recorder.state === "recording") {
     try { state.recorder.stop(); } catch (_) { /* closing */ }
@@ -620,12 +809,14 @@ window.addEventListener("beforeunload", () => {
 syncShareButtons();
 flags();
 liveStatus();
-window.__recorder = { state, start, shareScreen, stopDisplayTracks };
+setLiveUi(false);
+window.__recorder = { state, start, shareScreen, stopDisplayTracks, stop };
 
 if (params.get("autostart") === "1") {
   start().catch((err) => {
     state.starting = false;
     toast(err.message || String(err));
+    $("#btn-start").hidden = false;
     $("#btn-start").disabled = false;
   });
 }

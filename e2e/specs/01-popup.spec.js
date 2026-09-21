@@ -30,4 +30,31 @@ test.describe("Popup UI", () => {
     const delays = await page.$$eval("[data-delay]", (els) => els.map((e) => e.dataset.delay));
     expect(delays).toEqual(["3", "5", "10"]);
   });
+
+  test("recording button flips between Start and Stop from recording state", async ({ context, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+    await expect(page.locator("#rec-label")).toHaveText("Start recording");
+
+    await page.evaluate(() => {
+      window.__applyRec({ active: true, recording: true, startedAt: 0, pending: true });
+    });
+    await expect(page.locator("#rec-label")).toHaveText("Starting…");
+
+    await page.evaluate(() => {
+      window.__applyRec({
+        active: true,
+        recording: true,
+        startedAt: Date.now() - 2000,
+        pending: false,
+      });
+    });
+    await expect(page.locator("#rec-label")).toHaveText("Stop recording");
+    await expect(page.locator("#rec-status")).toBeVisible();
+
+    await page.evaluate(() => {
+      window.__applyRec({ active: false, recording: false, startedAt: 0, pending: false });
+    });
+    await expect(page.locator("#rec-label")).toHaveText("Start recording");
+  });
 });

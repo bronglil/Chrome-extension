@@ -15,8 +15,77 @@
 const OFFSCREEN_PATH = "src/offscreen/offscreen.html";
 
 // In-memory recording state (mirrored to storage so the popup survives worker
-// restarts). The actual MediaRecorder lives in the offscreen document.
-let recording = { active: false, startedAt: 0, windowId: 0 };
+// restarts). The MediaRecorder lives in the recorder window.
+let recording = { active: false, startedAt: 0, pending: false, windowId: 0, tabId: 0 };
+
+function recordingSnapshot() {
+  return {
+    recording: !!recording.active,
+    startedAt: recording.startedAt || 0,
+    pending: !!recording.pending,
+  };
+}
+
+async function windowExists(id) {
+  if (!id) return false;
+  try {
+    await chrome.windows.get(id);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function tabExists(id) {
+  if (!id) return false;
+  try {
+    await chrome.tabs.get(id);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Rebuild memory from storage + the live recorder window (SW often restarts).
+// Note: without the "tabs" permission, tab.url is often hidden — identify the
+// recorder by the window/tab ids we stored when opening it.
+async function hydrateRecording() {
+  let stored = null;
+  try {
+    stored = (await chrome.storage.local.get("recordingState")).recordingState || null;
+  } catch (_) { /* ignore */ }
+
+  const windowId = recording.windowId || stored?.windowId || 0;
+  const tabId = recording.tabId || stored?.tabId || 0;
+  const alive = (await tabExists(tabId)) || (await windowExists(windowId)) || !!(await findRecorderTab());
+
+  if (!alive) {
+    if (recording.active || stored?.active) {
+      recording = { active: false, startedAt: 0, pending: false, windowId: 0, tabId: 0 };
+      await localSet({ recordingState: recording }).catch(() => {});
+      try { chrome.action.setBadgeText({ text: "" }); } catch (_) { /* ignore */ }
+    }
+    return recordingSnapshot();
+  }
+
+  const startedAt = recording.startedAt || stored?.startedAt || 0;
+  const pending = !startedAt || !!(stored?.pending && !startedAt);
+  recording = {
+    active: true,
+    startedAt,
+    pending: !startedAt,
+    windowId: windowId || recording.windowId || 0,
+    tabId: tabId || recording.tabId || 0,
+  };
+  await localSet({ recordingState: recording }).catch(() => {});
+  if (startedAt) {
+    try {
+      chrome.action.setBadgeBackgroundColor({ color: "#ef4444" });
+      chrome.action.setBadgeText({ text: "●" });
+    } catch (_) { /* ignore */ }
+  }
+  return recordingSnapshot();
+}
 
 // ---------------------------------------------------------------------------
 // Offscreen document lifecycle
@@ -352,23 +421,34 @@ async function rememberClip(text) {
 
 async function syncClipHistory() {
   try {
+    await sessionPagesReady;
     await chrome.scripting.unregisterContentScripts({ ids: ["cliphist"] }).catch(() => {});
     await chrome.scripting.registerContentScripts([CLIP_SCRIPT]);
   } catch (e) { console.warn("[SnapShot] cliphist", e); }
+  // Dynamic registration only applies to future navigations — seed open tabs now.
+  try {
+    const tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
+    await Promise.all(tabs.map((tab) => chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      files: CLIP_SCRIPT.js,
+    }).catch(() => {})));
+  } catch (e) { console.warn("[SnapShot] cliphist inject", e); }
 }
 
 async function showClipPicker() {
   const tab = await getActiveTab();
   if (!isCapturable(tab)) return;
-  const payload = { type: "SHOW_CLIP_PICKER", items: await clipList() };
+  const items = await clipList();
+  const payload = { type: "SHOW_CLIP_PICKER", items };
+  const send = () => chrome.tabs.sendMessage(tab.id, payload);
   try {
-    await chrome.tabs.sendMessage(tab.id, payload);
+    await send();
   } catch (_) {
     await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId: tab.id, allFrames: false },
       files: CLIP_SCRIPT.js,
-    });
-    await chrome.tabs.sendMessage(tab.id, payload).catch(() => {});
+    }).catch(() => {});
+    await send().catch(() => {});
   }
 }
 
@@ -514,14 +594,34 @@ async function captureDesktop(kind) {
 // ---------------------------------------------------------------------------
 async function findRecorderTab() {
   const prefix = chrome.runtime.getURL("src/recorder/recorder.html");
-  const isRecorder = (t) => (t.url || "").startsWith(prefix);
+  const isRecorder = (t) => {
+    const url = t.url || "";
+    return url.startsWith(prefix) || url.includes("/src/recorder/recorder.html");
+  };
+
+  if (recording.tabId) {
+    try {
+      const tab = await chrome.tabs.get(recording.tabId);
+      if (tab) return tab;
+    } catch (_) { /* gone */ }
+  }
   if (recording.windowId) {
     try {
       const tabs = await chrome.tabs.query({ windowId: recording.windowId });
-      const hit = tabs.find(isRecorder);
-      if (hit) return hit;
+      if (tabs[0]) return tabs[0];
     } catch (_) { /* window already gone */ }
   }
+  try {
+    const stored = (await chrome.storage.local.get("recordingState")).recordingState;
+    if (stored?.tabId) {
+      try { return await chrome.tabs.get(stored.tabId); } catch (_) { /* gone */ }
+    }
+    if (stored?.windowId) {
+      const tabs = await chrome.tabs.query({ windowId: stored.windowId });
+      if (tabs[0]) return tabs[0];
+    }
+  } catch (_) { /* ignore */ }
+
   const tabs = await chrome.tabs.query({});
   return tabs.find(isRecorder) || null;
 }
@@ -539,6 +639,7 @@ async function focusRecorder(tab) {
 }
 
 async function toggleRecording(options = {}) {
+  await hydrateRecording();
   const existing = await findRecorderTab();
   const live = !!(recording.active && recording.startedAt && !recording.pending);
 
@@ -566,17 +667,20 @@ async function toggleRecording(options = {}) {
     height: 620,
     focused: true,
   });
-  recording = { active: true, startedAt: 0, pending: true, windowId: win.id };
+  const tabId = win.tabs?.[0]?.id || 0;
+  recording = { active: true, startedAt: 0, pending: true, windowId: win.id, tabId };
   await localSet({ recordingState: recording });
-  return { recording: true, pending: true };
+  return { recording: true, pending: true, startedAt: 0 };
 }
 
 async function markRecordingStarted(startedAt) {
+  const tab = await findRecorderTab();
   recording = {
     active: true,
     startedAt: startedAt || Date.now(),
     pending: false,
-    windowId: recording.windowId || 0,
+    windowId: tab?.windowId || recording.windowId || 0,
+    tabId: tab?.id || recording.tabId || 0,
   };
   await localSet({ recordingState: recording });
   chrome.action.setBadgeBackgroundColor({ color: "#ef4444" });
@@ -584,9 +688,19 @@ async function markRecordingStarted(startedAt) {
 }
 
 async function markRecordingIdle() {
-  recording = { active: false, startedAt: 0 };
+  recording = { active: false, startedAt: 0, pending: false, windowId: 0, tabId: 0 };
   await localSet({ recordingState: recording });
   chrome.action.setBadgeText({ text: "" });
+}
+
+async function closeRecorderWindow() {
+  const windowId = recording.windowId;
+  const tab = await findRecorderTab();
+  const id = tab?.windowId || windowId;
+  recording.windowId = 0;
+  recording.tabId = 0;
+  if (!id) return;
+  try { await chrome.windows.remove(id); } catch (_) { /* already gone */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -629,10 +743,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse(await toggleRecording(msg.options || {}));
           break;
         case "GET_RECORDING_STATE":
-          sendResponse({ recording: recording.active, startedAt: recording.startedAt, pending: !!recording.pending });
+          sendResponse(await hydrateRecording());
           break;
         case "RECORDING_STARTED":
           await markRecordingStarted(msg.startedAt);
+          sendResponse({ ok: true });
+          break;
+        case "RECORDING_COUNTDOWN":
+          recording = {
+            ...recording,
+            active: true,
+            pending: true,
+            startedAt: 0,
+          };
+          await localSet({ recordingState: recording });
           sendResponse({ ok: true });
           break;
         case "CLIP_REMEMBER":
@@ -691,6 +815,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true });
           break;
         }
+        case "CLOSE_RECORDER":
+          await markRecordingIdle();
+          await closeRecorderWindow();
+          sendResponse({ ok: true });
+          break;
         default:
           sendResponse({ error: "Unknown message: " + msg.type });
       }
@@ -727,9 +856,11 @@ chrome.commands.onCommand.addListener(async (command) => {
 // Restore badge on startup if a recording somehow persisted.
 chrome.runtime.onStartup.addListener(async () => {
   await storageReady;
+  await hydrateRecording();
   const { recordingState } = await chrome.storage.local.get("recordingState");
-  if (recordingState?.active) {
-    await localSet({ recordingState: { active: false, startedAt: 0 } });
+  // Browser restart: drop stale "recording" if the recorder window is gone.
+  if (recordingState?.active && !(await findRecorderTab())) {
+    await markRecordingIdle();
   }
   syncPageQr();
   syncClipHistory();
@@ -737,12 +868,16 @@ chrome.runtime.onStartup.addListener(async () => {
 
 chrome.runtime.onInstalled.addListener(async () => {
   await storageReady;
-  await localSet({ recordingState: { active: false, startedAt: 0 } });
+  await localSet({ recordingState: { active: false, startedAt: 0, pending: false, windowId: 0, tabId: 0 } });
+  recording = { active: false, startedAt: 0, pending: false, windowId: 0, tabId: 0 };
   syncPageQr();
   syncClipHistory();
 });
 
-storageReady.then(() => syncClipHistory()).catch(() => syncClipHistory());
+storageReady.then(() => {
+  hydrateRecording().catch(() => {});
+  syncClipHistory();
+}).catch(() => syncClipHistory());
 
 chrome.windows.onRemoved.addListener((id) => {
   if (recording.windowId && recording.windowId === id) {

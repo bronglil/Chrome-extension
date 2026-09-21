@@ -44,21 +44,47 @@ async function ensureSiteAccess() {
 async function refreshRecordingUI() {
   try {
     const state = await send({ type: "GET_RECORDING_STATE" });
-    setRecordingUI(!!state?.recording && !state?.pending, !!state?.pending);
+    applyRecordingState(state);
   } catch (_) {
-    /* worker may be asleep; ignore */
+    /* worker may be asleep; try storage mirror */
+    try {
+      const stored = (await chrome.storage.local.get("recordingState")).recordingState;
+      applyRecordingState(stored);
+    } catch (_) { /* ignore */ }
+  }
+}
+
+function applyRecordingState(state) {
+  if (!state) {
+    setRecordingUI(false, false);
+    return;
+  }
+  const on = !!(state.recording || state.active);
+  const active = on && !!state.startedAt && !state.pending;
+  const pending = on && !active;
+  setRecordingUI(active, pending);
+  if (active && state.startedAt) {
+    const s = Math.max(0, Math.floor((Date.now() - state.startedAt) / 1000));
+    const mm = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    const el = $("#rec-time");
+    if (el) el.textContent = `${mm}:${ss}`;
   }
 }
 
 function setRecordingUI(active, pending = false) {
   const btn = $("#rec-toggle");
-  $("#rec-label").textContent = active
+  const label = $("#rec-label");
+  if (!btn || !label) return;
+  label.textContent = active
     ? "Stop recording"
     : pending
       ? "Starting…"
       : "Start recording";
   btn.classList.toggle("recording", active);
-  $("#rec-status").hidden = !active;
+  btn.classList.toggle("pending", pending && !active);
+  const status = $("#rec-status");
+  if (status) status.hidden = !active;
 }
 
 // Capture / action buttons.
@@ -77,8 +103,18 @@ document.querySelectorAll("[data-action]").forEach((btn) => {
         systemAudio: $("#rec-audio").checked,
       };
       persistRecPrefs(opts);
+      const cur = await send({ type: "GET_RECORDING_STATE" }).catch(() => null);
+      const live = !!(cur?.recording && cur?.startedAt && !cur?.pending);
+      if (live) {
+        setRecordingUI(false, false);
+        toast("Stopping…");
+      } else {
+        setRecordingUI(false, true);
+        toast("Starting…");
+      }
       await queueJob({ type: "RECORD", options: opts });
-      window.close();
+      // Give the worker a moment to open/stop the recorder, then close.
+      setTimeout(() => window.close(), 180);
       return;
     }
 
@@ -220,13 +256,7 @@ initPageQR();
 // Live recording timer while popup is open.
 let timerInt = null;
 async function tickTimer() {
-  const state = await send({ type: "GET_RECORDING_STATE" }).catch(() => null);
-  if (state?.recording && state.startedAt) {
-    const s = Math.floor((Date.now() - state.startedAt) / 1000);
-    const mm = String(Math.floor(s / 60)).padStart(2, "0");
-    const ss = String(s % 60).padStart(2, "0");
-    $("#rec-time").textContent = `${mm}:${ss}`;
-  }
+  await refreshRecordingUI();
 }
 
 const REC_PREFS = "recPrefs";
@@ -242,6 +272,13 @@ function persistRecPrefs(opts) {
     if (typeof stored.systemAudio === "boolean") $("#rec-audio").checked = stored.systemAudio;
   } catch (_) { /* first run */ }
 })();
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.recordingState) return;
+  applyRecordingState(changes.recordingState.newValue);
+});
+
+window.__applyRec = applyRecordingState;
 
 refreshRecordingUI();
 timerInt = setInterval(tickTimer, 500);

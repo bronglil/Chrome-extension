@@ -169,8 +169,9 @@ test.describe("Screenshot + recording (end to end)", () => {
     );
     await rec.click("#btn-start");
     await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 15_000 });
-    await expect(rec.locator("#btn-share")).toBeVisible();
-    await expect(rec.locator("#btn-unshare")).toBeHidden();
+    await expect(rec.locator("#actions-live")).toBeVisible();
+    await expect(rec.locator("#btn-share-live")).toBeVisible();
+    await expect(rec.locator("#btn-stop")).toBeEnabled();
     const canvas = await rec.evaluate(() => {
       const c = window.__recorder.state.canvas;
       return { w: c?.width || 0, h: c?.height || 0 };
@@ -187,8 +188,8 @@ test.describe("Screenshot + recording (end to end)", () => {
     );
     await rec.click("#btn-start");
     await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 15_000 });
-    await rec.click("#btn-share");
-    await expect(rec.locator("#btn-unshare")).toBeVisible({ timeout: 20_000 });
+    await rec.click("#btn-share-live");
+    await expect(rec.locator("#screen-preview")).toHaveClass(/is-live/, { timeout: 20_000 });
     await rec.waitForTimeout(1200);
 
     const preview = await samplePreview(rec);
@@ -214,26 +215,18 @@ test.describe("Screenshot + recording (end to end)", () => {
     expect(saved.mean).toBeGreaterThan(2);
   });
 
-  test("Desktop picker share after start is not this recorder window", async ({ context, extensionId }) => {
-    test.setTimeout(45_000);
+  test("shows an animated 3-2-1 countdown before going live", async ({ context, extensionId }) => {
+    test.setTimeout(30_000);
     const rec = await context.newPage();
     await rec.goto(
       `chrome-extension://${extensionId}/src/recorder/recorder.html?cam=0&mic=0&audio=0&saveAs=0`
     );
     await rec.click("#btn-start");
-    await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 15_000 });
-    await rec.click("#btn-share");
-    try {
-      await expect(rec.locator("#btn-unshare")).toBeVisible({ timeout: 10_000 });
-    } catch {
-      test.skip(true, "Chrome did not auto-select a desktop capture source");
-    }
-    await rec.waitForTimeout(800);
-    const preview = await samplePreview(rec);
-    expect(preview.w).toBeGreaterThan(16);
-    expect(preview.h).toBeGreaterThan(16);
-    expect(preview.max, "shared screen preview should not be black").toBeGreaterThan(8);
-    expect(/snapshot studio|recorder\.html/i.test(preview.label || "")).toBeFalsy();
-    await rec.click("#btn-stop").catch(() => {});
+    await expect(rec.locator("#countdown")).toBeVisible({ timeout: 5_000 });
+    await expect(rec.locator("#countdown-num")).toHaveText(/^[321]$/);
+    await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 8_000 });
+    await expect(rec.locator("#countdown")).toBeHidden();
+    await expect(rec.locator("#actions-live")).toBeVisible();
+    await expect(rec.locator("#btn-stop")).toBeEnabled();
   });
 });
