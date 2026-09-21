@@ -286,6 +286,8 @@ const CLIP_SCRIPT = {
   matches: ["<all_urls>"],
   js: ["src/content/clip-history.js"],
   runAt: "document_idle",
+  allFrames: true,
+  persistAcrossSessions: true,
 };
 
 async function rememberClip(text) {
@@ -301,8 +303,8 @@ async function rememberClip(text) {
 
 async function syncClipHistory() {
   try {
-    const r = await chrome.scripting.getRegisteredContentScripts({ ids: ["cliphist"] });
-    if (!r.length) await chrome.scripting.registerContentScripts([CLIP_SCRIPT]);
+    await chrome.scripting.unregisterContentScripts({ ids: ["cliphist"] }).catch(() => {});
+    await chrome.scripting.registerContentScripts([CLIP_SCRIPT]);
   } catch (e) { console.warn("[SnapShot] cliphist", e); }
 }
 

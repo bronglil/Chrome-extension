@@ -304,6 +304,7 @@
           const value = area.value;
           if (!value || value === "Reading text…") return;
           try { await navigator.clipboard.writeText(value); } catch (_) { /* keep panel */ }
+          chrome.runtime.sendMessage({ type: "CLIP_REMEMBER", text: value }).catch(() => {});
           copyBtn.textContent = "Copied";
         });
         doneBtn.addEventListener("click", cleanup);

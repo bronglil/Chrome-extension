@@ -5,10 +5,13 @@
 
   const KEY = "clipHistory";
   const HOST_ID = "snapshot-clip-host";
+  const TOP = window === window.top;
+  let pickerAt = 0;
+  let onKey = null;
 
   async function remember(text) {
     const t = String(text || "").replace(/\u00a0/g, " ").trim();
-    if (!t || t.length < 1) return;
+    if (!t) return;
     const clipped = t.length > 8000 ? t.slice(0, 8000) : t;
     try {
       const { clipHistory } = await chrome.storage.session.get(KEY);
@@ -27,9 +30,22 @@
     }
   }
 
+  function selectedText() {
+    const el = document.activeElement;
+    if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) {
+      if (String(el.type || "").toLowerCase() === "password") return "";
+      const a = el.selectionStart;
+      const b = el.selectionEnd;
+      if (typeof a === "number" && typeof b === "number" && b > a) {
+        return String(el.value).slice(a, b);
+      }
+    }
+    return (window.getSelection && window.getSelection().toString()) || "";
+  }
+
   function insertAtFocus(text) {
     const el = document.activeElement;
-    if (el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && /text|search|url|email|password|tel|number/.test(el.type || "text")))) {
+    if (el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && /text|search|url|email|tel|number/.test(el.type || "text")))) {
       const start = el.selectionStart ?? el.value.length;
       const end = el.selectionEnd ?? start;
       el.setRangeText(text, start, end, "end");
@@ -44,6 +60,10 @@
   }
 
   function hidePicker() {
+    if (onKey) {
+      document.removeEventListener("keydown", onKey, true);
+      onKey = null;
+    }
     document.getElementById(HOST_ID)?.remove();
   }
 
@@ -54,20 +74,20 @@
   }
 
   async function showPicker() {
+    if (!TOP) return;
+    if (Date.now() - pickerAt < 400) return;
+    pickerAt = Date.now();
     hidePicker();
     const items = await list();
     const host = document.createElement("div");
     host.id = HOST_ID;
-    host.style.cssText = "position:fixed;inset:0;z-index:2147483647;all:initial;";
+    host.style.cssText = "all:initial;position:fixed;inset:0;z-index:2147483647;";
     const root = host.attachShadow({ mode: "open" });
     const rows = items.length
-      ? items.map((t, i) => {
-        const preview = t.replace(/\s+/g, " ").slice(0, 120);
-        return `<button class="row" data-i="${i}" type="button">
+      ? items.map((_t, i) => `<button class="row" data-i="${i}" type="button">
           <span class="n">${i + 1}</span>
           <span class="t"></span>
-        </button>`;
-      }).join("")
+        </button>`).join("")
       : `<p class="empty">No copies yet. Copy text with Ctrl/⌘+C.</p>`;
 
     root.innerHTML = `
@@ -111,39 +131,38 @@
     });
     root.querySelector(".mask").addEventListener("click", hidePicker);
 
-    function onKey(e) {
+    onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); hidePicker(); }
       const n = parseInt(e.key, 10);
       if (n >= 1 && n <= items.length) {
         e.preventDefault();
         pasteItem(items[n - 1]);
       }
-    }
+    };
     document.addEventListener("keydown", onKey, true);
-    const obs = new MutationObserver(() => {
-      if (!document.getElementById(HOST_ID)) {
-        document.removeEventListener("keydown", onKey, true);
-        obs.disconnect();
-      }
-    });
     document.documentElement.appendChild(host);
-    obs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  document.addEventListener("copy", (e) => {
-    const sel = (window.getSelection && window.getSelection().toString()) || "";
+  function onCopyLike(e) {
+    const el = document.activeElement;
+    if (el && String(el.type || "").toLowerCase() === "password") return;
     const clip = e.clipboardData ? e.clipboardData.getData("text/plain") : "";
-    remember(sel || clip);
-  }, true);
+    remember(clip || selectedText());
+  }
 
-  document.addEventListener("keydown", (e) => {
-    const mod = e.metaKey || e.ctrlKey;
-    if (mod && e.shiftKey && (e.key === "v" || e.key === "V")) {
-      e.preventDefault();
-      e.stopPropagation();
-      showPicker();
-    }
-  }, true);
+  document.addEventListener("copy", onCopyLike, false);
+  document.addEventListener("cut", onCopyLike, false);
+
+  if (TOP) {
+    document.addEventListener("keydown", (e) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.shiftKey && (e.key === "v" || e.key === "V")) {
+        e.preventDefault();
+        e.stopPropagation();
+        showPicker();
+      }
+    }, true);
+  }
 
   chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     if (msg?.type === "SHOW_CLIP_PICKER") {

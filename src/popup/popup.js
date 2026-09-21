@@ -203,6 +203,7 @@ $("#qr-share").addEventListener("click", async () => {
     catch (_) { /* cancelled or unsupported — fall through */ }
   }
   navigator.clipboard.writeText(qrState.url).then(() => toast("Link copied (share unavailable)"));
+  send({ type: "CLIP_REMEMBER", text: qrState.url }).catch(() => {});
 });
 
 initPageQR();
