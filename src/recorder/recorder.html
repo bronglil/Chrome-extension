@@ -11,7 +11,7 @@
     <img class="bar__logo" src="../../icons/icon48.png" width="28" height="28" alt="" />
     <div class="bar__text">
       <strong>Recording</strong>
-      <span id="status-label">Choose what to share…</span>
+      <span id="status-label">Ready when you are</span>
     </div>
     <div class="bar__live" id="live-chip" hidden>
       <span class="bar__pulse"></span>
@@ -22,20 +22,24 @@
   <main class="stage">
     <div class="screen-wrap">
       <video id="screen-preview" autoplay muted playsinline></video>
-      <p class="screen-empty" id="screen-empty">Click Share screen, then pick the screen, window, or page to record — not this Recording window.</p>
+      <p class="screen-empty" id="screen-empty">Start recording anytime. Share a screen, window, or tab when you want it in the video — pick that page, not this window.</p>
     </div>
 
     <section class="person" id="person-panel" hidden>
       <video id="cam-preview" autoplay muted playsinline></video>
       <span class="person__tag">You</span>
     </section>
-    <p class="person-off" id="person-off" hidden>Screen only — camera is off</p>
+    <p class="person-off" id="person-off" hidden>Camera is off</p>
   </main>
 
   <footer class="dock">
     <div class="flags" id="flags"></div>
-    <button class="share" id="btn-share">Share screen to start</button>
-    <button class="stop" id="btn-stop" disabled hidden>
+    <div class="dock__row">
+      <button class="share" id="btn-share" type="button">Share screen</button>
+      <button class="ghost" id="btn-unshare" type="button" hidden>Remove screen</button>
+    </div>
+    <button class="start" id="btn-start" type="button">Start recording</button>
+    <button class="stop" id="btn-stop" type="button" disabled hidden>
       <span class="stop__sq"></span>
       Stop &amp; save
     </button>

@@ -55,7 +55,7 @@ function setRecordingUI(active, pending = false) {
   $("#rec-label").textContent = active
     ? "Stop recording"
     : pending
-      ? "Waiting for share…"
+      ? "Starting…"
       : "Start recording";
   btn.classList.toggle("recording", active);
   $("#rec-status").hidden = !active;

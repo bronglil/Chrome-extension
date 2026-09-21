@@ -55,9 +55,10 @@ body {
   background: #05070b;
   display: block;
 }
+#screen-preview:not(.is-live) { opacity: 0; }
 .screen-empty {
   position: absolute; inset: 0; margin: auto; height: max-content; padding: 0 20px;
-  text-align: center; color: var(--ink-faint); font-size: 13px;
+  text-align: center; color: var(--ink-faint); font-size: 13px; line-height: 1.45;
 }
 .screen-empty[hidden] { display: none; }
 
@@ -86,22 +87,30 @@ body {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: 999px; padding: 3px 8px;
 }
-.share {
-  width: 100%; height: 44px; border: none; border-radius: 12px;
-  background: var(--accent); color: #fff; font-size: 14px; font-weight: 700;
-  cursor: pointer;
+.dock__row { display: flex; gap: 8px; }
+.share, .start, .stop, .ghost {
+  height: 44px; border: none; border-radius: 12px;
+  font-size: 14px; font-weight: 700; cursor: pointer;
 }
-.share:disabled { opacity: .5; cursor: default; }
-.share[hidden] { display: none; }
+.share, .start { flex: 1; width: 100%; background: var(--accent); color: #fff; }
+.ghost {
+  flex: 1; background: transparent; color: var(--ink);
+  border: 1px solid var(--line);
+}
+.share:disabled, .start:disabled, .ghost:disabled { opacity: .5; cursor: default; }
+.share[hidden], .start[hidden], .ghost[hidden], .stop[hidden] { display: none; }
 .stop {
-  width: 100%; height: 44px; border: none; border-radius: 12px;
-  background: var(--rec); color: #fff; font-size: 14px; font-weight: 700;
-  cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; background: var(--rec); color: #fff;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
 }
 .stop:disabled { opacity: .45; cursor: not-allowed; }
 .stop__sq { width: 10px; height: 10px; border-radius: 2px; background: #fff; }
 .toast {
   position: fixed; left: 14px; right: 14px; bottom: 14px;
   background: #e8ebf1; color: #12151c; padding: 9px 12px; border-radius: 9px;
-  font-size: 12px; text-align: center;
+  font-size: 12px; text-align: center; z-index: 5;
 }
+
+body.is-live .stage { padding: 8px 12px 4px; }
+body.is-live .screen-wrap { min-height: 88px; }
+body.is-live .person { width: min(160px, 70%); }

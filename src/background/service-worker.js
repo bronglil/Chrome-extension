@@ -557,6 +557,7 @@ async function toggleRecording(options = {}) {
     cam: options.camera ? "1" : "0",
     mic: options.mic ? "1" : "0",
     audio: options.systemAudio ? "1" : "0",
+    autostart: "1",
   });
   const win = await chrome.windows.create({
     url: chrome.runtime.getURL("src/recorder/recorder.html") + "?" + qs.toString(),

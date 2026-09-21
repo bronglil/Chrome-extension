@@ -161,14 +161,34 @@ test.describe("Screenshot + recording (end to end)", () => {
     await expect(editor.locator("#empty-state")).toBeHidden();
   });
 
-  test("Recording preview and saved WebM contain live video frames", async ({ context, extensionId }) => {
+  test("Recording starts without a screen share", async ({ context, extensionId }) => {
+    test.setTimeout(45_000);
+    const rec = await context.newPage();
+    await rec.goto(
+      `chrome-extension://${extensionId}/src/recorder/recorder.html?cam=0&mic=0&audio=0&saveAs=0&fake=1`
+    );
+    await rec.click("#btn-start");
+    await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 15_000 });
+    await expect(rec.locator("#btn-share")).toBeVisible();
+    await expect(rec.locator("#btn-unshare")).toBeHidden();
+    const canvas = await rec.evaluate(() => {
+      const c = window.__recorder.state.canvas;
+      return { w: c?.width || 0, h: c?.height || 0 };
+    });
+    expect(canvas.w).toBeGreaterThan(16);
+    expect(canvas.h).toBeGreaterThan(16);
+  });
+
+  test("Share can be attached after start and the saved WebM has live frames", async ({ context, extensionId }) => {
     test.setTimeout(60_000);
     const rec = await context.newPage();
     await rec.goto(
       `chrome-extension://${extensionId}/src/recorder/recorder.html?cam=0&mic=0&audio=0&saveAs=0&fake=1`
     );
+    await rec.click("#btn-start");
+    await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 15_000 });
     await rec.click("#btn-share");
-    await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 20_000 });
+    await expect(rec.locator("#btn-unshare")).toBeVisible({ timeout: 20_000 });
     await rec.waitForTimeout(1200);
 
     const preview = await samplePreview(rec);
@@ -194,15 +214,17 @@ test.describe("Screenshot + recording (end to end)", () => {
     expect(saved.mean).toBeGreaterThan(2);
   });
 
-  test("Desktop picker recording is not a black screen when auto-selected", async ({ context, extensionId }) => {
+  test("Desktop picker share after start is not this recorder window", async ({ context, extensionId }) => {
     test.setTimeout(45_000);
     const rec = await context.newPage();
     await rec.goto(
       `chrome-extension://${extensionId}/src/recorder/recorder.html?cam=0&mic=0&audio=0&saveAs=0`
     );
+    await rec.click("#btn-start");
+    await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 15_000 });
     await rec.click("#btn-share");
     try {
-      await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 10_000 });
+      await expect(rec.locator("#btn-unshare")).toBeVisible({ timeout: 10_000 });
     } catch {
       test.skip(true, "Chrome did not auto-select a desktop capture source");
     }
