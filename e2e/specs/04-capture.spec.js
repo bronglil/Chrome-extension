@@ -103,4 +103,36 @@ test.describe("Capture pipeline (content script)", () => {
     expect(rect.width).toBeGreaterThan(100);
     expect(rect.height).toBeGreaterThan(100);
   });
+
+  test("copy-text drag returns a box and fills the copy bar", async ({ context }) => {
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${PORT}/tall-page.html`);
+    await page.bringToFront();
+    const tabId = await tabIdFor(context, "tall-page.html");
+
+    await (await sw(context)).evaluate(async (tabId) => {
+      await chrome.scripting.insertCSS({ target: { tabId }, files: ["src/content/area-select.css"] });
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["src/lib/utils.js", "src/content/content.js"] });
+      globalThis.__copyPromise = chrome.tabs.sendMessage(tabId, { type: "START_COPY_TEXT" });
+    }, tabId);
+
+    await expect(page.locator(".snapshot-overlay")).toBeVisible();
+    await page.mouse.move(80, 80);
+    await page.mouse.down();
+    await page.mouse.move(280, 200);
+    await page.mouse.up();
+
+    const result = await (await sw(context)).evaluate(() => globalThis.__copyPromise);
+    expect(result.cancelled).not.toBe(true);
+    expect(result.deviceRect.width).toBeGreaterThan(50);
+    expect(result.deviceRect.height).toBeGreaterThan(50);
+
+    await (await sw(context)).evaluate(async (tabId) => {
+      await chrome.tabs.sendMessage(tabId, { type: "COPY_TEXT_CAPTURED" });
+      await chrome.tabs.sendMessage(tabId, { type: "FILL_COPY_TEXT", text: "Hello from box" });
+    }, tabId);
+
+    await expect(page.locator(".snapshot-copybar")).toBeVisible();
+    await expect(page.locator(".snapshot-copybar__text")).toHaveValue("Hello from box");
+  });
 });

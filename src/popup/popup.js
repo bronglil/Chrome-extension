@@ -20,16 +20,13 @@ function send(message) {
 // Persist the job before the popup closes. sendMessage from a dying popup
 // is often dropped in MV3; session storage always wakes the worker.
 async function queueJob(job) {
+  const payload = { ...job, at: Date.now() };
   try {
-    await chrome.storage.session.set({ pendingJob: { ...job, at: Date.now() } });
-  } catch (_) {
-    if (job.type === "RECORD") {
-      await send({ type: "TOGGLE_RECORDING", options: job.options || {} });
-    } else {
-      const res = await send({ type: "CAPTURE", action: job.action, delayMs: job.delayMs });
-      if (res?.error) throw new Error(res.error);
-    }
-  }
+    await chrome.storage.session.set({ pendingJob: payload });
+  } catch (_) { /* session unavailable — kick the worker directly */ }
+  // Wake the worker immediately. Do not wait for the capture itself: area
+  // select needs the popup closed so the page is visible to drag on.
+  chrome.runtime.sendMessage({ type: "RUN_PENDING", job: payload }).catch(() => {});
 }
 
 // Host access is in the manifest, but Chrome may still prompt (or leave it
@@ -80,12 +77,6 @@ document.querySelectorAll("[data-action]").forEach((btn) => {
         systemAudio: $("#rec-audio").checked,
       };
       persistRecPrefs(opts);
-      const need = [];
-      if (opts.camera) need.push("camera");
-      if (opts.mic) need.push("microphone");
-      if (need.length) {
-        try { await chrome.permissions.request({ permissions: need }); } catch (_) { /* optional */ }
-      }
       await queueJob({ type: "RECORD", options: opts });
       window.close();
       return;

@@ -26,6 +26,8 @@ const state = {
   startedAt: 0,
   clock: 0,
   canvas: null,
+  finalizing: false,
+  recordClones: [],
 };
 
 function toast(msg, ms = 2400) {
@@ -63,31 +65,51 @@ function pickDesktop(wantAudio) {
   });
 }
 
+function streamFromDesktopId(streamId, wantAudio) {
+  return navigator.mediaDevices.getUserMedia({
+    audio: wantAudio
+      ? { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: streamId } }
+      : false,
+    video: {
+      mandatory: {
+        chromeMediaSource: "desktop",
+        chromeMediaSourceId: streamId,
+        maxFrameRate: 30,
+      },
+    },
+  });
+}
+
+function isRecorderSelfCapture(stream) {
+  const label = (stream.getVideoTracks()[0]?.label || "").toLowerCase();
+  if (!label) return false;
+  return /snapshot studio|recorder\.html|snapshot-studio/.test(label)
+    || (label.includes("recording") && label.includes("snapshot"));
+}
+
 async function getDisplayStream(wantAudio) {
-  // Prefer getDisplayMedia from this click so Chrome keeps the share dialog.
+  // Use Chrome's desktop picker from this page so the stream is the screen /
+  // window / tab the user chose — not this Recording window.
+  // getDisplayMedia on chrome-extension:// pages often captures this tab.
+  let thisWin = null;
+  try { thisWin = await chrome.windows.getCurrent(); } catch (_) { /* ignore */ }
+  if (thisWin?.id) {
+    try { await chrome.windows.update(thisWin.id, { state: "minimized" }); } catch (_) { /* ignore */ }
+  }
   try {
-    return await navigator.mediaDevices.getDisplayMedia({
-      video: {
-        frameRate: { ideal: 30, max: 30 },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-      },
-      audio: wantAudio,
-      systemAudio: wantAudio ? "include" : "exclude",
-      preferCurrentTab: false,
-    });
-  } catch (err) {
-    const cancelled = /cancell|denied|abort|NotAllowed/i.test((err?.name || "") + (err?.message || ""));
-    if (cancelled) throw new Error("Capture cancelled.");
     const streamId = await pickDesktop(wantAudio);
-    return navigator.mediaDevices.getUserMedia({
-      audio: wantAudio
-        ? { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: streamId } }
-        : false,
-      video: {
-        mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: streamId },
-      },
-    });
+    const stream = await streamFromDesktopId(streamId, wantAudio);
+    if (isRecorderSelfCapture(stream)) {
+      stream.getTracks().forEach((t) => t.stop());
+      throw new Error("Pick the screen, window, or page you want in the video — not this Recording window.");
+    }
+    return stream;
+  } finally {
+    if (thisWin?.id) {
+      try {
+        await chrome.windows.update(thisWin.id, { state: "normal", focused: true });
+      } catch (_) { /* ignore */ }
+    }
   }
 }
 
@@ -128,17 +150,40 @@ function mixAudio(streams) {
   return dest.stream;
 }
 
-function attachPreview(el, stream) {
+async function attachPreview(el, stream) {
   el.srcObject = stream;
   el.muted = true;
-  return el.play().catch(() => {});
+  el.autoplay = true;
+  el.playsInline = true;
+  try {
+    await el.play();
+  } catch (_) {
+    await new Promise((r) => setTimeout(r, 40));
+    await el.play().catch(() => {});
+  }
 }
 
 function waitMeta(video) {
-  if (video.videoWidth) return Promise.resolve();
+  if (video.readyState >= 2 && video.videoWidth) return Promise.resolve();
   return new Promise((resolve) => {
-    video.addEventListener("loadedmetadata", resolve, { once: true });
+    const done = () => {
+      video.removeEventListener("loadeddata", done);
+      video.removeEventListener("playing", done);
+      resolve();
+    };
+    video.addEventListener("loadeddata", done);
+    video.addEventListener("playing", done);
+    setTimeout(done, 1200);
   });
+}
+
+function videoForRecord(display) {
+  const track = display.getVideoTracks()[0];
+  if (!track) return new MediaStream();
+  track.enabled = true;
+  const clone = track.clone();
+  state.recordClones.push(clone);
+  return new MediaStream([clone]);
 }
 
 function drawPip(ctx, cam, W, H) {
@@ -184,12 +229,11 @@ function startComposer(screenEl, camEl) {
   return canvas.captureStream(fps);
 }
 
-function pickMime() {
-  return [
-    "video/webm;codecs=vp9,opus",
-    "video/webm;codecs=vp8,opus",
-    "video/webm",
-  ].find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm";
+function pickMime(hasAudio) {
+  const list = hasAudio
+    ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+    : ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  return list.find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm";
 }
 
 function bitrateFor(w, h) {
@@ -200,12 +244,15 @@ function bitrateFor(w, h) {
 
 async function start() {
   setStatus("Choose a screen, window, or tab…");
+  state.recordClones = [];
+  state.finalizing = false;
   state.display = await getDisplayStream(opts.systemAudio);
 
   const screenEl = $("#screen-preview");
   await attachPreview(screenEl, state.display);
   await waitMeta(screenEl);
   $("#screen-empty").hidden = true;
+  screenEl.classList.add("is-live");
 
   if (opts.camera) {
     try {
@@ -240,7 +287,7 @@ async function start() {
 
   const videoStream = opts.camera && state.camera
     ? startComposer(screenEl, $("#cam-preview"))
-    : new MediaStream(state.display.getVideoTracks());
+    : videoForRecord(state.display);
 
   state.mixedAudio = mixAudio([state.display, state.mic]);
   const tracks = [...videoStream.getVideoTracks()];
@@ -249,13 +296,19 @@ async function start() {
 
   const vtrack = state.display.getVideoTracks()[0];
   const settings = vtrack?.getSettings?.() || {};
-  const mimeType = pickMime();
+  const hasAudio = !!(state.mixedAudio && state.mixedAudio.getAudioTracks().length);
+  const mimeType = pickMime(hasAudio);
   state.chunks = [];
-  state.recorder = new MediaRecorder(out, {
+  const recOpts = {
     mimeType,
     videoBitsPerSecond: bitrateFor(settings.width || screenEl.videoWidth, settings.height || screenEl.videoHeight),
-    audioBitsPerSecond: 192000,
-  });
+  };
+  if (hasAudio) recOpts.audioBitsPerSecond = 192000;
+  try {
+    state.recorder = new MediaRecorder(out, recOpts);
+  } catch (_) {
+    state.recorder = new MediaRecorder(out, { mimeType: "video/webm" });
+  }
   state.recorder.ondataavailable = (e) => {
     if (e.data && e.data.size) state.chunks.push(e.data);
   };
@@ -290,32 +343,71 @@ function stop() {
   else finalize();
 }
 
+function waitForDownload(id) {
+  return new Promise((resolve) => {
+    if (id == null) return resolve();
+    const finish = (delta) => {
+      if (delta.id !== id) return;
+      const s = delta.state?.current;
+      if (s === "complete" || s === "interrupted") {
+        chrome.downloads.onChanged.removeListener(finish);
+        resolve(s);
+      }
+    };
+    chrome.downloads.onChanged.addListener(finish);
+    setTimeout(() => {
+      chrome.downloads.onChanged.removeListener(finish);
+      resolve("timeout");
+    }, 120000);
+  });
+}
+
 async function finalize() {
+  if (state.finalizing) return;
+  state.finalizing = true;
   clearInterval(state.composeTimer);
   clearInterval(state.clock);
   const blob = new Blob(state.chunks, { type: "video/webm" });
   stopAll();
   chrome.runtime.sendMessage({ type: "RECORDING_DONE" }).catch(() => {});
-  if (blob.size) {
-    const url = URL.createObjectURL(blob);
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    try {
-      await chrome.downloads.download({
-        url,
-        filename: `SnapShot-recording-${stamp}.webm`,
-        saveAs: true,
-      });
-    } catch (err) {
-      toast("Save failed: " + (err.message || err));
-    }
+  if (!blob.size) {
+    setStatus("Nothing was recorded");
+    toast("Recording was empty — try Share screen again.");
+    $("#btn-stop").hidden = true;
+    $("#btn-share").hidden = false;
+    $("#btn-share").disabled = false;
+    state.finalizing = false;
+    state.startedAt = 0;
+    return;
   }
-  setTimeout(() => window.close(), 400);
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  try {
+    const downloadId = await chrome.downloads.download({
+      url,
+      filename: `SnapShot-recording-${stamp}.webm`,
+      saveAs: params.get("saveAs") !== "0",
+    });
+    await waitForDownload(downloadId);
+    setStatus("Saved");
+    setTimeout(() => window.close(), 600);
+  } catch (err) {
+    setStatus("Save failed");
+    toast("Save failed: " + (err.message || err));
+    $("#btn-stop").hidden = true;
+    $("#btn-share").hidden = false;
+    $("#btn-share").disabled = false;
+    state.finalizing = false;
+    state.startedAt = 0;
+  }
 }
 
 function stopAll() {
   [state.display, state.camera, state.mic].forEach((s) => {
     try { s?.getTracks().forEach((t) => t.stop()); } catch (_) { /* already ended */ }
   });
+  state.recordClones.forEach((t) => { try { t.stop(); } catch (_) { /* already ended */ } });
+  state.recordClones = [];
   try { state.audioCtx?.close(); } catch (_) { /* ignore */ }
   state.recorder = null;
 }
@@ -331,10 +423,12 @@ $("#btn-share").addEventListener("click", () => {
     $("#btn-share").disabled = false;
     $("#btn-share").hidden = false;
     $("#btn-stop").hidden = true;
-    const cancelled = /cancell|denied|abort|NotAllowed/i.test((err?.name || "") + (err?.message || ""));
+    const cancelled = /cancell|denied|abort|NotAllowed|not this Recording/i.test((err?.name || "") + (err?.message || ""));
     if (cancelled) {
       setStatus("Share a screen to start");
-      toast("Nothing was shared — click Share screen to try again.");
+      toast(err.message && /not this Recording/i.test(err.message)
+        ? err.message
+        : "Nothing was shared — click Share screen to try again.");
       return;
     }
     chrome.runtime.sendMessage({ type: "RECORDING_CANCELLED", error: err.message }).catch(() => {});

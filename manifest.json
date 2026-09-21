@@ -33,10 +33,6 @@
     "clipboardWrite",
     "commands"
   ],
-  "optional_permissions": [
-    "camera",
-    "microphone"
-  ],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
@@ -49,9 +45,6 @@
     "capture-area": {
       "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
       "description": "Capture a selected area"
-    },
-    "capture-fullscreen": {
-      "description": "Capture the full screen (share picker)"
     },
     "toggle-recording": {
       "description": "Start / stop screen recording"

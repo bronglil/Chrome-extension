@@ -11,10 +11,6 @@ test.describe("Popup UI", () => {
     await expect(page.locator('[data-action="capture-full-page"]')).toBeVisible();
     await expect(page.locator('[data-action="ocr-area"]')).toBeVisible();
 
-    // Desktop capture family (share picker).
-    await expect(page.locator('[data-action="capture-fullscreen"]')).toBeVisible();
-    await expect(page.locator('[data-action="capture-window"]')).toBeVisible();
-
     // Delay presets.
     await expect(page.locator('[data-delay="3"]')).toBeVisible();
     await expect(page.locator('[data-delay="5"]')).toBeVisible();

@@ -65,12 +65,21 @@ function pageMeta(tab, extra = {}) {
 
 const pendingCaptures = new Map();
 
-async function clearDiskCaptures() {
+// chrome.storage.local is ~10 MB. Old PNG data URLs under capture:/ocr: (or
+// anything else) fill it, then even a tiny recordingState write throws
+// Resource::kQuotaBytes. Keep only small prefs; never store screenshots here.
+const KEEP_LOCAL = new Set(["recordingState", "recPrefs", "pageQrEnabled"]);
+
+async function purgeStorage() {
   try {
     const all = await chrome.storage.local.get(null);
-    const keys = Object.keys(all).filter((k) => k.startsWith("capture:") || k.startsWith("ocr:"));
-    if (keys.length) await chrome.storage.local.remove(keys);
-  } catch (_) { /* ignore */ }
+    const drop = Object.keys(all).filter((k) => !KEEP_LOCAL.has(k));
+    for (let i = 0; i < drop.length; i += 16) {
+      await chrome.storage.local.remove(drop.slice(i, i + 16));
+    }
+  } catch (e) {
+    console.warn("[SnapShot] purge", e);
+  }
   try {
     await new Promise((resolve, reject) => {
       const req = indexedDB.deleteDatabase("snapshot-captures");
@@ -81,21 +90,50 @@ async function clearDiskCaptures() {
   } catch (_) { /* nothing to wipe */ }
 }
 
+async function localSet(obj) {
+  try {
+    await chrome.storage.local.set(obj);
+  } catch (e) {
+    if (!/quota/i.test(String(e?.message || e))) throw e;
+    await purgeStorage();
+    await chrome.storage.local.set(obj);
+  }
+}
+
+const storageReady = purgeStorage();
+
 async function stashAndOpenEditor(dataUrl, meta = {}) {
+  await storageReady;
   const id = shortId();
-  pendingCaptures.set(id, { dataUrl, meta, createdAt: Date.now() });
+  const payload = { dataUrl, meta, createdAt: Date.now() };
+  pendingCaptures.set(id, payload);
   setTimeout(() => pendingCaptures.delete(id), 120000);
-  await clearDiskCaptures().catch(() => {});
+  // Offscreen stays alive when the worker is killed (opening a tab often
+  // suspends it). Without this the editor boots to a blank canvas.
+  try {
+    await ensureOffscreen();
+    await toOffscreen({ type: "HOLD_CAPTURE", id, dataUrl, meta, createdAt: payload.createdAt });
+  } catch (e) {
+    console.warn("[SnapShot] hold capture", e);
+  }
   await chrome.tabs.create({
     url: chrome.runtime.getURL("src/editor/editor.html") + "?id=" + id,
   });
   return id;
 }
 
-function takeCapture(id) {
-  const payload = pendingCaptures.get(id) || null;
-  if (payload) pendingCaptures.delete(id);
-  return payload;
+async function takeCapture(id) {
+  const mem = pendingCaptures.get(id);
+  if (mem) {
+    pendingCaptures.delete(id);
+    toOffscreen({ type: "DROP_CAPTURE", id }).catch(() => {});
+    return mem;
+  }
+  try {
+    const held = await toOffscreen({ type: "TAKE_CAPTURE", id });
+    if (held?.dataUrl) return held;
+  } catch (_) { /* offscreen not ready */ }
+  return null;
 }
 
 async function openEmptyEditor() {
@@ -161,13 +199,14 @@ async function consumePendingJob(job) {
   if (!job) return;
   if (job.at && job.at === lastJobAt) return;
   if (jobBusy) {
+    if (job.at && queuedJob?.at === job.at) return;
     queuedJob = job;
     return;
   }
   jobBusy = true;
   lastJobAt = job.at || Date.now();
   try {
-    await ensureOffscreen().catch(() => {});
+    await storageReady;
     await chrome.storage.session.remove("pendingJob");
     if (job.type === "RECORD") {
       await toggleRecording(job.options || {});
@@ -259,7 +298,7 @@ async function pageQrRegistered() {
 }
 
 async function setPageQr(on) {
-  await chrome.storage.local.set({ pageQrEnabled: on });
+  await localSet({ pageQrEnabled: on });
   try {
     const registered = await pageQrRegistered();
     if (on && !registered) await chrome.scripting.registerContentScripts([PAGE_QR_SCRIPT]);
@@ -411,20 +450,31 @@ async function ocrArea() {
   const rect = result.deviceRect;
   if (!rect) return;
 
+  const fill = async (text, error) => {
+    try {
+      await chrome.tabs.sendMessage(tab.id, {
+        type: "FILL_COPY_TEXT",
+        text,
+        error: text ? "" : (error || "No text found in this area."),
+      });
+    } catch (_) { /* overlay already closed */ }
+  };
+
+  // Selectable page text is instant — skip OCR when the DOM already has it.
+  const domText = String(result.domText || "").trim();
+  if (domText.replace(/\s+/g, " ").length >= 8) {
+    await fill(domText);
+    return;
+  }
+
   const dataUrl = await captureVisible(tab.windowId);
   try {
     await chrome.tabs.sendMessage(tab.id, { type: "COPY_TEXT_CAPTURED" });
   } catch (_) { /* overlay gone */ }
 
   const res = await toOffscreen({ type: "OCR_CROP", dataUrl, rect });
-  const text = String(res?.text || "").trim() || String(result.domText || "").trim();
-  try {
-    await chrome.tabs.sendMessage(tab.id, {
-      type: "FILL_COPY_TEXT",
-      text,
-      error: text ? "" : (res?.error || "No text found in this area."),
-    });
-  } catch (_) { /* overlay already closed */ }
+  const text = String(res?.text || "").trim() || domText;
+  await fill(text, res?.error);
 }
 
 // Desktop still: a small page owns getDisplayMedia so Chrome's share
@@ -472,7 +522,7 @@ async function focusRecorder(tab) {
     startedAt: recording.startedAt || 0,
     windowId: tab.windowId,
   };
-  await chrome.storage.local.set({ recordingState: recording });
+  await localSet({ recordingState: recording });
   await chrome.windows.update(tab.windowId, { focused: true });
   return { recording: true, pending: !!recording.pending, startedAt: recording.startedAt };
 }
@@ -486,7 +536,11 @@ async function toggleRecording(options = {}) {
     return { recording: true, stopping: true, startedAt: recording.startedAt };
   }
 
-  if (existing) return focusRecorder(existing);
+  // A leftover share window (never started) blocks a new recording. Close it
+  // and open a fresh one so Start always works.
+  if (existing) {
+    try { await chrome.windows.remove(existing.windowId); } catch (_) { /* gone */ }
+  }
 
   const qs = new URLSearchParams({
     cam: options.camera ? "1" : "0",
@@ -501,7 +555,7 @@ async function toggleRecording(options = {}) {
     focused: true,
   });
   recording = { active: true, startedAt: 0, pending: true, windowId: win.id };
-  await chrome.storage.local.set({ recordingState: recording });
+  await localSet({ recordingState: recording });
   return { recording: true, pending: true };
 }
 
@@ -512,14 +566,14 @@ async function markRecordingStarted(startedAt) {
     pending: false,
     windowId: recording.windowId || 0,
   };
-  await chrome.storage.local.set({ recordingState: recording });
+  await localSet({ recordingState: recording });
   chrome.action.setBadgeBackgroundColor({ color: "#ef4444" });
   chrome.action.setBadgeText({ text: "●" });
 }
 
 async function markRecordingIdle() {
   recording = { active: false, startedAt: 0 };
-  await chrome.storage.local.set({ recordingState: recording });
+  await localSet({ recordingState: recording });
   chrome.action.setBadgeText({ text: "" });
 }
 
@@ -573,8 +627,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await rememberClip(msg.text);
           sendResponse({ ok: true });
           break;
+        case "RUN_PENDING":
+          consumePendingJob(msg.job || (await chrome.storage.session.get("pendingJob")).pendingJob);
+          sendResponse({ ok: true });
+          break;
         case "TAKE_CAPTURE":
-          sendResponse(takeCapture(msg.id) || {});
+          sendResponse((await takeCapture(msg.id)) || {});
           break;
         case "DESKTOP_FRAME": {
           if (!msg.dataUrl) throw new Error("No screenshot received.");
@@ -653,25 +711,23 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 // Restore badge on startup if a recording somehow persisted.
 chrome.runtime.onStartup.addListener(async () => {
+  await storageReady;
   const { recordingState } = await chrome.storage.local.get("recordingState");
   if (recordingState?.active) {
-    // Worker restarted mid-recording; offscreen is gone, so reset.
-    await chrome.storage.local.set({ recordingState: { active: false, startedAt: 0 } });
+    await localSet({ recordingState: { active: false, startedAt: 0 } });
   }
-  await clearDiskCaptures().catch(() => {});
   syncPageQr();
   syncClipHistory();
 });
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({ recordingState: { active: false, startedAt: 0 } });
-  clearDiskCaptures().catch(() => {});
+chrome.runtime.onInstalled.addListener(async () => {
+  await storageReady;
+  await localSet({ recordingState: { active: false, startedAt: 0 } });
   syncPageQr();
   syncClipHistory();
 });
 
-clearDiskCaptures().catch(() => {});
-syncClipHistory();
+storageReady.then(() => syncClipHistory()).catch(() => syncClipHistory());
 
 chrome.windows.onRemoved.addListener((id) => {
   if (recording.windowId && recording.windowId === id) {

@@ -71,10 +71,13 @@ async function boot() {
   if (id) {
     const key = "capture:" + id;
     let stored = null;
-    try {
-      stored = await chrome.runtime.sendMessage({ type: "TAKE_CAPTURE", id });
-      if (!stored?.dataUrl) stored = null;
-    } catch (_) { stored = null; }
+    for (let i = 0; i < 8 && !stored?.dataUrl; i++) {
+      try {
+        stored = await chrome.runtime.sendMessage({ type: "TAKE_CAPTURE", id });
+        if (!stored?.dataUrl) stored = null;
+      } catch (_) { stored = null; }
+      if (!stored?.dataUrl) await new Promise((r) => setTimeout(r, 80 * (i + 1)));
+    }
     if (!stored) stored = (await chrome.storage.local.get(key))[key];
     if (stored?.dataUrl) {
       state.meta = stored.meta || {};
