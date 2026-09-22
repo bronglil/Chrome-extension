@@ -13,10 +13,21 @@ const opts = {
   camera: params.get("cam") !== "0",
   mic: params.get("mic") === "1",
   systemAudio: params.get("audio") !== "0",
+  quality: ["720", "1080", "1440"].includes(params.get("q")) ? params.get("q") : "720",
+  pip: ["bl", "bc", "br"].includes(params.get("pip")) ? params.get("pip") : "bc",
+  blur: params.get("blur") === "1",
 };
 
-const OUT_W = 1280;
-const OUT_H = 720;
+const QUALITY = {
+  "720": { w: 1280, h: 720 },
+  "1080": { w: 1920, h: 1080 },
+  "1440": { w: 2560, h: 1440 },
+};
+const OUT = QUALITY[opts.quality] || QUALITY["720"];
+const OUT_W = OUT.w;
+const OUT_H = OUT.h;
+
+const PIP_ORDER = ["bc", "br", "bl"];
 
 const state = {
   display: null,
@@ -30,6 +41,8 @@ const state = {
   composeTimer: 0,
   composing: false,
   startedAt: 0,
+  pausedAt: 0,
+  pausedMs: 0,
   clock: 0,
   canvas: null,
   ctx: null,
@@ -40,6 +53,16 @@ const state = {
   picking: false,
   saved: false,
   countdownTimer: 0,
+  paused: false,
+  micMuted: false,
+  camOff: false,
+  discard: false,
+  pip: opts.pip,
+  blurBg: !!opts.blur,
+  pipScratch: null,
+  pipScratchCtx: null,
+  pipMask: null,
+  pipMaskCtx: null,
 };
 
 function toast(msg, ms = 2400) {
@@ -57,12 +80,14 @@ function setStatus(text) {
 function flags() {
   const bits = [
     { label: state.sharing ? "Screen on" : "No screen", on: state.sharing, live: state.sharing },
-    { label: opts.camera && state.camera ? "Camera on" : "Camera off", on: !!(opts.camera && state.camera) },
-    { label: opts.mic && state.mic ? "Mic on" : "Mic off", on: !!(opts.mic && state.mic) },
+    { label: opts.camera && state.camera && !state.camOff ? "Camera on" : "Camera off", on: !!(opts.camera && state.camera && !state.camOff) },
+    { label: opts.mic && state.mic ? (state.micMuted ? "Mic muted" : "Mic on") : "Mic off", on: !!(opts.mic && state.mic && !state.micMuted) },
     {
       label: opts.systemAudio && state.display?.getAudioTracks().length ? "System audio" : "No system audio",
       on: !!(opts.systemAudio && state.display?.getAudioTracks().length),
     },
+    { label: `${opts.quality}p`, on: true },
+    { label: state.blurBg ? "Blur on" : "Blur off", on: !!state.blurBg },
   ];
   $("#flags").innerHTML = bits.map((b) => {
     const cls = ["flag", b.on ? "is-on" : "", b.live ? "is-live" : ""].filter(Boolean).join(" ");
@@ -73,16 +98,66 @@ function flags() {
 function syncShareButtons() {
   const label = state.sharing ? "Change screen" : "Share screen";
   const liveLabel = state.sharing ? "Change" : "Share";
-  const share = $("#btn-share");
-  const shareLive = $("#btn-share-live");
   const shareLabel = $("#share-label");
   const shareLabelLive = $("#share-label-live");
   if (shareLabel) shareLabel.textContent = label;
-  else if (share) share.textContent = label;
   if (shareLabelLive) shareLabelLive.textContent = liveLabel;
   $("#btn-unshare").hidden = !state.sharing || !!state.startedAt;
   $("#screen-empty").hidden = state.sharing;
   $("#screen-preview").classList.toggle("is-live", state.sharing);
+}
+
+function syncPipUi() {
+  const panel = $("#person-panel");
+  if (!panel) return;
+  panel.classList.remove("pip--bl", "pip--bc", "pip--br");
+  panel.classList.add(`pip--${state.pip || "bc"}`);
+}
+
+function syncToggleUi() {
+  const pauseBtn = $("#btn-pause");
+  if (pauseBtn) {
+    pauseBtn.classList.toggle("is-paused", state.paused);
+    const pauseIco = pauseBtn.querySelector(".ico-pause");
+    const playIco = pauseBtn.querySelector(".ico-play");
+    if (pauseIco) pauseIco.hidden = state.paused;
+    if (playIco) playIco.hidden = !state.paused;
+    pauseBtn.title = state.paused ? "Resume" : "Pause";
+  }
+  const micBtn = $("#btn-mic");
+  if (micBtn) {
+    micBtn.hidden = !(opts.mic && state.mic);
+    micBtn.classList.toggle("is-off", state.micMuted);
+    const on = micBtn.querySelector(".ico-mic-on");
+    const off = micBtn.querySelector(".ico-mic-off");
+    if (on) on.hidden = state.micMuted;
+    if (off) off.hidden = !state.micMuted;
+  }
+  const camBtn = $("#btn-cam");
+  if (camBtn) {
+    camBtn.hidden = !(opts.camera && state.camera);
+    camBtn.classList.toggle("is-off", state.camOff);
+    const on = camBtn.querySelector(".ico-cam-on");
+    const off = camBtn.querySelector(".ico-cam-off");
+    if (on) on.hidden = state.camOff;
+    if (off) off.hidden = !state.camOff;
+  }
+  const pipBtn = $("#btn-pip-pos");
+  if (pipBtn) pipBtn.hidden = !(opts.camera && state.camera && !state.camOff);
+  const blurBtn = $("#btn-blur");
+  if (blurBtn) {
+    blurBtn.hidden = !(opts.camera && state.camera && !state.camOff);
+    blurBtn.classList.toggle("is-on", state.blurBg);
+    blurBtn.title = state.blurBg ? "Turn off background blur" : "Blur camera background";
+  }
+  const banner = $("#paused-banner");
+  if (banner) banner.hidden = !state.paused;
+  $("#live-chip")?.classList.toggle("is-paused", state.paused);
+  if (opts.camera && state.camera) {
+    $("#person-panel").hidden = state.camOff;
+    $("#person-panel")?.classList.toggle("is-blur", state.blurBg && !state.camOff);
+  }
+  syncPipUi();
 }
 
 function setLiveUi(live) {
@@ -95,14 +170,16 @@ function setLiveUi(live) {
     $("#btn-start").hidden = true;
     $("#person-off").hidden = true;
   }
+  syncToggleUi();
 }
 
 function liveStatus() {
   if (state.starting && !state.startedAt) return setStatus("Countdown…");
   if (!state.startedAt) return setStatus("Ready to record");
-  if (state.sharing && opts.camera && state.camera) return setStatus("Screen + camera · live");
+  if (state.paused) return setStatus("Paused — resume when ready");
+  if (state.sharing && opts.camera && state.camera && !state.camOff) return setStatus("Screen + camera · live");
   if (state.sharing) return setStatus("Screen shared · live");
-  if (opts.camera && state.camera) return setStatus("Camera only · share anytime");
+  if (opts.camera && state.camera && !state.camOff) return setStatus("Camera only · share anytime");
   setStatus("Recording · share a screen anytime");
 }
 
@@ -336,32 +413,100 @@ function drawContain(ctx, video, W, H) {
 function drawWaiting(ctx, W, H) {
   ctx.fillStyle = "#0b0d12";
   ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = "#7c74ff";
+  ctx.fillStyle = state.paused ? "#fbbf24" : "#7c74ff";
   ctx.beginPath();
   ctx.arc(W / 2, H / 2 - 36, 18, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#e8ebf1";
   ctx.font = "600 28px Inter, system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("Recording", W / 2, H / 2 + 8);
+  ctx.fillText(state.paused ? "Paused" : "Recording", W / 2, H / 2 + 8);
   ctx.fillStyle = "#9ca3af";
   ctx.font = "16px Inter, system-ui, sans-serif";
-  ctx.fillText("Share a screen when you are ready", W / 2, H / 2 + 36);
+  ctx.fillText(
+    state.paused ? "Resume when you are ready" : "Share a screen when you are ready",
+    W / 2,
+    H / 2 + 36
+  );
+}
+
+function ensurePipBuffers(w, h) {
+  if (state.pipScratch && state.pipScratch.width === w && state.pipScratch.height === h) return;
+  state.pipScratch = document.createElement("canvas");
+  state.pipScratch.width = w;
+  state.pipScratch.height = h;
+  state.pipScratchCtx = state.pipScratch.getContext("2d", { alpha: true });
+  state.pipMask = document.createElement("canvas");
+  state.pipMask.width = w;
+  state.pipMask.height = h;
+  state.pipMaskCtx = state.pipMask.getContext("2d", { alpha: true });
+}
+
+function drawCamMirrored(destCtx, cam, w, h) {
+  destCtx.save();
+  destCtx.translate(w, 0);
+  destCtx.scale(-1, 1);
+  destCtx.drawImage(cam, 0, 0, w, h);
+  destCtx.restore();
+}
+
+function renderBlurredPip(cam, pipW, pipH) {
+  ensurePipBuffers(pipW, pipH);
+  const soft = state.pipScratchCtx;
+  const sharp = state.pipMaskCtx;
+  const blurPx = Math.max(10, Math.round(pipW * 0.08));
+
+  soft.clearRect(0, 0, pipW, pipH);
+  soft.filter = `blur(${blurPx}px)`;
+  soft.imageSmoothingEnabled = true;
+  drawCamMirrored(soft, cam, pipW, pipH);
+  soft.filter = "none";
+
+  sharp.clearRect(0, 0, pipW, pipH);
+  drawCamMirrored(sharp, cam, pipW, pipH);
+  sharp.globalCompositeOperation = "destination-in";
+  const g = sharp.createRadialGradient(
+    pipW * 0.5,
+    pipH * 0.42,
+    pipW * 0.16,
+    pipW * 0.5,
+    pipH * 0.48,
+    pipW * 0.52
+  );
+  g.addColorStop(0, "rgba(0,0,0,1)");
+  g.addColorStop(0.5, "rgba(0,0,0,0.92)");
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  sharp.fillStyle = g;
+  sharp.fillRect(0, 0, pipW, pipH);
+  sharp.globalCompositeOperation = "source-over";
+
+  soft.drawImage(state.pipMask, 0, 0);
+  return state.pipScratch;
 }
 
 function drawPip(ctx, cam, W, H) {
+  if (state.camOff) return;
   const pipW = Math.round(Math.min(W * 0.22, 420));
   const pipH = Math.round(pipW * (cam.videoHeight && cam.videoWidth ? cam.videoHeight / cam.videoWidth : 0.75));
-  const x = Math.round((W - pipW) / 2);
-  const y = H - pipH - Math.round(H * 0.04);
+  const margin = Math.round(H * 0.04);
+  const pos = state.pip || "bc";
+  let x;
+  if (pos === "bl") x = margin;
+  else if (pos === "br") x = W - pipW - margin;
+  else x = Math.round((W - pipW) / 2);
+  const y = H - pipH - margin;
   const r = Math.min(22, pipW / 8);
   ctx.save();
   ctx.beginPath();
   ctx.roundRect(x, y, pipW, pipH, r);
   ctx.clip();
-  ctx.translate(x + pipW, y);
-  ctx.scale(-1, 1);
-  ctx.drawImage(cam, 0, 0, pipW, pipH);
+  if (state.blurBg) {
+    ctx.drawImage(renderBlurredPip(cam, pipW, pipH), x, y);
+  } else {
+    ctx.translate(x + pipW, y);
+    ctx.scale(-1, 1);
+    ctx.drawImage(cam, 0, 0, pipW, pipH);
+  }
   ctx.restore();
   ctx.save();
   ctx.strokeStyle = "rgba(255,255,255,0.92)";
@@ -394,7 +539,7 @@ function startComposer() {
     } else {
       drawWaiting(ctx, OUT_W, OUT_H);
     }
-    if (opts.camera && state.camera && camEl.readyState >= 2 && camEl.videoWidth) {
+    if (opts.camera && state.camera && !state.camOff && camEl.readyState >= 2 && camEl.videoWidth) {
       drawPip(ctx, camEl, OUT_W, OUT_H);
     }
   };
@@ -612,6 +757,12 @@ async function start() {
 
   state.recorder.start(1000);
   state.startedAt = Date.now();
+  state.paused = false;
+  state.pausedAt = 0;
+  state.pausedMs = 0;
+  state.micMuted = false;
+  state.camOff = false;
+  state.discard = false;
   setLiveUi(true);
   flags();
   liveStatus();
@@ -627,11 +778,84 @@ function bitrateFor(w, h) {
   return Math.round(Math.min(20_000_000, Math.max(8_000_000, pixels * 4)));
 }
 
+function elapsedMs() {
+  if (!state.startedAt) return 0;
+  const pausedExtra = state.paused && state.pausedAt ? Date.now() - state.pausedAt : 0;
+  return Math.max(0, Date.now() - state.startedAt - state.pausedMs - pausedExtra);
+}
+
 function tickClock() {
-  const s = Math.max(0, Math.floor((Date.now() - state.startedAt) / 1000));
+  const s = Math.floor(elapsedMs() / 1000);
   const mm = String(Math.floor(s / 60)).padStart(2, "0");
   const ss = String(s % 60).padStart(2, "0");
   $("#rec-clock").textContent = `${mm}:${ss}`;
+}
+
+function togglePause() {
+  if (!state.recorder || state.finalizing || !state.startedAt) return;
+  try {
+    if (state.paused) {
+      if (state.recorder.state === "paused") state.recorder.resume();
+      if (state.pausedAt) state.pausedMs += Date.now() - state.pausedAt;
+      state.pausedAt = 0;
+      state.paused = false;
+      toast("Recording resumed");
+    } else {
+      if (state.recorder.state === "recording") state.recorder.pause();
+      state.paused = true;
+      state.pausedAt = Date.now();
+      toast("Paused");
+    }
+  } catch (err) {
+    toast(err.message || "Pause unavailable");
+    return;
+  }
+  syncToggleUi();
+  liveStatus();
+  tickClock();
+}
+
+function toggleMicMute() {
+  if (!state.mic) return;
+  state.micMuted = !state.micMuted;
+  state.mic.getAudioTracks().forEach((t) => { t.enabled = !state.micMuted; });
+  syncToggleUi();
+  flags();
+  toast(state.micMuted ? "Microphone muted" : "Microphone on");
+}
+
+function toggleCamera() {
+  if (!state.camera) return;
+  state.camOff = !state.camOff;
+  state.camera.getVideoTracks().forEach((t) => { t.enabled = !state.camOff; });
+  syncToggleUi();
+  flags();
+  liveStatus();
+  toast(state.camOff ? "Camera hidden" : "Camera on");
+}
+
+function cyclePip() {
+  if (!(opts.camera && state.camera) || state.camOff) return;
+  const i = PIP_ORDER.indexOf(state.pip);
+  state.pip = PIP_ORDER[(i + 1) % PIP_ORDER.length];
+  syncPipUi();
+  const labels = { bc: "bottom center", br: "bottom right", bl: "bottom left" };
+  toast(`Camera · ${labels[state.pip] || state.pip}`);
+}
+
+function toggleBlur() {
+  if (!(opts.camera && state.camera) || state.camOff) return;
+  state.blurBg = !state.blurBg;
+  syncToggleUi();
+  flags();
+  toast(state.blurBg ? "Background blur on" : "Background blur off");
+}
+
+function discard() {
+  if (state.finalizing || !state.startedAt) return;
+  state.discard = true;
+  toast("Discarding…");
+  stop();
 }
 
 function stop() {
@@ -648,9 +872,9 @@ function stop() {
   }
   state.finalizing = true;
   hideCountdown();
-  showSaving("Saving your recording…");
+  showSaving(state.discard ? "Discarding…" : "Saving your recording…");
   $("#btn-stop").disabled = true;
-  setStatus("Saving…");
+  setStatus(state.discard ? "Discarding…" : "Saving…");
   cancelSharePicker();
   stopDisplayTracks();
   if (state.recorder && state.recorder.state !== "inactive") {
@@ -702,10 +926,17 @@ async function finalize() {
   state.composing = false;
   clearInterval(state.composeTimer);
   clearInterval(state.clock);
-  const blob = new Blob(state.chunks || [], { type: "video/webm" });
+  const discarded = !!state.discard;
+  const blob = discarded ? null : new Blob(state.chunks || [], { type: "video/webm" });
   state.chunks = [];
   stopAll();
-  chrome.runtime.sendMessage({ type: "RECORDING_DONE" }).catch(() => {});
+  chrome.runtime.sendMessage({ type: discarded ? "RECORDING_CANCELLED" : "RECORDING_DONE" }).catch(() => {});
+  if (discarded) {
+    showSaving("Discarded — closing…");
+    setStatus("Discarded");
+    setTimeout(closeRecorderWindow, 450);
+    return;
+  }
   if (!blob.size) {
     showSaving("Nothing was recorded");
     setStatus("Nothing was recorded");
@@ -795,11 +1026,17 @@ $("#btn-unshare").addEventListener("click", () => {
   toast("Screen removed — recording continues.");
 });
 $("#btn-stop").addEventListener("click", stop);
+$("#btn-pause")?.addEventListener("click", togglePause);
+$("#btn-mic")?.addEventListener("click", toggleMicMute);
+$("#btn-cam")?.addEventListener("click", toggleCamera);
+$("#btn-pip-pos")?.addEventListener("click", cyclePip);
+$("#btn-blur")?.addEventListener("click", toggleBlur);
+$("#btn-discard")?.addEventListener("click", discard);
 $("#btn-cancel-count")?.addEventListener("click", () => {
   if (state.starting && !state.recorder) stop();
 });
 window.addEventListener("beforeunload", () => {
-  if (state.recorder && state.recorder.state === "recording") {
+  if (state.recorder && (state.recorder.state === "recording" || state.recorder.state === "paused")) {
     try { state.recorder.stop(); } catch (_) { /* closing */ }
   } else if (!state.startedAt) {
     chrome.runtime.sendMessage({ type: "RECORDING_CANCELLED" }).catch(() => {});
@@ -810,7 +1047,44 @@ syncShareButtons();
 flags();
 liveStatus();
 setLiveUi(false);
-window.__recorder = { state, start, shareScreen, stopDisplayTracks, stop };
+syncPipUi();
+window.__recorder = {
+  state,
+  opts,
+  start,
+  shareScreen,
+  stopDisplayTracks,
+  stop,
+  togglePause,
+  toggleMicMute,
+  toggleCamera,
+  cyclePip,
+  toggleBlur,
+  discard,
+  /** @internal e2e helpers */
+  _sync() {
+    syncToggleUi();
+    flags();
+    liveStatus();
+  },
+  _armMic() {
+    opts.mic = true;
+    const track = { enabled: true, kind: "audio", stop() {} };
+    state.mic = { getAudioTracks: () => [track], getTracks: () => [track], _track: track };
+    syncToggleUi();
+    flags();
+    return track;
+  },
+  _armCam() {
+    opts.camera = true;
+    const track = { enabled: true, kind: "video", stop() {} };
+    state.camera = { getVideoTracks: () => [track], getTracks: () => [track], _track: track };
+    state.camOff = false;
+    syncToggleUi();
+    flags();
+    return track;
+  },
+};
 
 if (params.get("autostart") === "1") {
   start().catch((err) => {

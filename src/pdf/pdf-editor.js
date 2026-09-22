@@ -663,7 +663,12 @@ function bindStage(view) {
 
 function pointer(evt, stage = state.stage) {
   if (!stage) return null;
-  const el = stage.container().querySelector("canvas") || stage.container();
+  // Prefer the Konva content box — it matches the visible page and stays
+  // aligned even when buffer canvases use a higher devicePixelRatio.
+  const el =
+    stage.container().querySelector(".konvajs-content") ||
+    stage.container().querySelector("canvas") ||
+    stage.container();
   const box = el.getBoundingClientRect();
   if (!box.width || !box.height) return stage.getPointerPosition();
   const native = evt && evt.evt ? evt.evt : evt;
@@ -682,6 +687,21 @@ function pointer(evt, stage = state.stage) {
   return {
     x: ((cx - box.left) / box.width) * stage.width(),
     y: ((cy - box.top) / box.height) * stage.height(),
+  };
+}
+
+/** Map stage coords → client (for tests / hit-checking). */
+function clientFromStage(x, y, stage = state.stage) {
+  if (!stage) return null;
+  const el =
+    stage.container().querySelector(".konvajs-content") ||
+    stage.container().querySelector("canvas") ||
+    stage.container();
+  const box = el.getBoundingClientRect();
+  if (!box.width || !box.height) return null;
+  return {
+    x: box.left + (x / stage.width()) * box.width,
+    y: box.top + (y / stage.height()) * box.height,
   };
 }
 
@@ -1192,4 +1212,7 @@ async function overlayPng(num) {
 }
 
 // Expose a couple of internals for E2E tests.
-window.__pdfEditor = { state, openPdf, exportPdf, chooseAckSide, editText, addTextAt, goToPage };
+window.__pdfEditor = {
+  state, openPdf, exportPdf, chooseAckSide, editText, addTextAt, goToPage,
+  pointer, clientFromStage,
+};

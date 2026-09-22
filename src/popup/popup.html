@@ -70,8 +70,22 @@
           <span class="opt__ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8 8 0 0 1 0 12"/></svg></span>
           <span>Tab / system audio</span>
         </label>
+        <label class="opt" title="Soft-blur behind you in the camera bubble">
+          <input type="checkbox" id="rec-blur" />
+          <span class="opt__ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16"/></svg></span>
+          <span>Blur camera background</span>
+        </label>
+        <label class="opt opt--select" title="Output resolution">
+          <span class="opt__ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 19h8"/></svg></span>
+          <span>Quality</span>
+          <select id="rec-quality" aria-label="Recording quality">
+            <option value="720">720p</option>
+            <option value="1080">1080p</option>
+            <option value="1440">1440p</option>
+          </select>
+        </label>
       </div>
-      <p class="opts__hint">Opens a studio with a Loom-style 3-2-1 countdown, then records. Share or change your screen anytime. Stop saves and closes automatically.</p>
+      <p class="opts__hint">3-2-1 countdown, then live. Pause, mute, discard, and move your camera corner in the studio. Ctrl/⌘+Shift+R starts or stops.</p>
       <button class="rec-btn" id="rec-toggle" data-action="toggle-recording">
         <span class="rec-btn__dot" id="rec-ico"></span>
         <span id="rec-label">Start recording</span>

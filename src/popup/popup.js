@@ -101,6 +101,9 @@ document.querySelectorAll("[data-action]").forEach((btn) => {
         camera: $("#rec-cam").checked,
         mic: $("#rec-mic").checked,
         systemAudio: $("#rec-audio").checked,
+        quality: $("#rec-quality")?.value || "720",
+        pip: "bc",
+        blur: !!$("#rec-blur")?.checked,
       };
       persistRecPrefs(opts);
       const cur = await send({ type: "GET_RECORDING_STATE" }).catch(() => null);
@@ -270,8 +273,31 @@ function persistRecPrefs(opts) {
     if (typeof stored.camera === "boolean") $("#rec-cam").checked = stored.camera;
     if (typeof stored.mic === "boolean") $("#rec-mic").checked = stored.mic;
     if (typeof stored.systemAudio === "boolean") $("#rec-audio").checked = stored.systemAudio;
+    if (typeof stored.blur === "boolean" && $("#rec-blur")) $("#rec-blur").checked = stored.blur;
+    if (stored.quality && $("#rec-quality")) $("#rec-quality").value = stored.quality;
   } catch (_) { /* first run */ }
 })();
+
+function currentRecPrefs() {
+  return {
+    camera: $("#rec-cam").checked,
+    mic: $("#rec-mic").checked,
+    systemAudio: $("#rec-audio").checked,
+    quality: $("#rec-quality")?.value || "720",
+    pip: "bc",
+    blur: !!$("#rec-blur")?.checked,
+  };
+}
+
+$("#rec-quality")?.addEventListener("change", () => {
+  persistRecPrefs(currentRecPrefs());
+});
+$("#rec-blur")?.addEventListener("change", () => {
+  persistRecPrefs(currentRecPrefs());
+});
+$("#rec-cam")?.addEventListener("change", () => persistRecPrefs(currentRecPrefs()));
+$("#rec-mic")?.addEventListener("change", () => persistRecPrefs(currentRecPrefs()));
+$("#rec-audio")?.addEventListener("change", () => persistRecPrefs(currentRecPrefs()));
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !changes.recordingState) return;

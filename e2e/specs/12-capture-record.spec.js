@@ -229,4 +229,64 @@ test.describe("Screenshot + recording (end to end)", () => {
     await expect(rec.locator("#actions-live")).toBeVisible();
     await expect(rec.locator("#btn-stop")).toBeEnabled();
   });
+
+  test("live controls support pause and discard without download", async ({ context, extensionId }) => {
+    test.setTimeout(45_000);
+    const rec = await context.newPage();
+    await rec.goto(
+      `chrome-extension://${extensionId}/src/recorder/recorder.html?cam=0&mic=0&audio=0&saveAs=0&fake=1`
+    );
+    await rec.click("#btn-start");
+    await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 15_000 });
+    await expect(rec.locator("#btn-pause")).toBeVisible();
+    await expect(rec.locator("#btn-discard")).toBeVisible();
+
+    await rec.click("#btn-pause");
+    await expect(rec.locator("#paused-banner")).toBeVisible({ timeout: 5_000 });
+    await expect(rec.locator("#live-chip")).toHaveClass(/is-paused/);
+
+    await rec.click("#btn-pause");
+    await expect(rec.locator("#paused-banner")).toBeHidden({ timeout: 5_000 });
+
+    const downloadPromise = rec.waitForEvent("download", { timeout: 4_000 }).then(
+      () => "downloaded",
+      () => "none"
+    );
+    await rec.click("#btn-discard");
+    await expect(rec.locator("#saving")).toBeVisible({ timeout: 5_000 });
+    expect(await downloadPromise).toBe("none");
+  });
+
+  test("quality query sets canvas resolution", async ({ context, extensionId }) => {
+    test.setTimeout(45_000);
+    const rec = await context.newPage();
+    await rec.goto(
+      `chrome-extension://${extensionId}/src/recorder/recorder.html?cam=0&mic=0&audio=0&saveAs=0&fake=1&q=1080`
+    );
+    await rec.click("#btn-start");
+    await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 15_000 });
+    const canvas = await rec.evaluate(() => {
+      const c = window.__recorder.state.canvas;
+      return { w: c?.width || 0, h: c?.height || 0 };
+    });
+    expect(canvas).toEqual({ w: 1920, h: 1080 });
+  });
+
+  test("background blur starts from URL and can toggle in state", async ({ context, extensionId }) => {
+    test.setTimeout(45_000);
+    const rec = await context.newPage();
+    await rec.goto(
+      `chrome-extension://${extensionId}/src/recorder/recorder.html?cam=0&mic=0&audio=0&saveAs=0&fake=1&blur=1`
+    );
+    expect(await rec.evaluate(() => window.__recorder.state.blurBg)).toBe(true);
+
+    await rec.click("#btn-start");
+    await expect(rec.locator("#live-chip")).toBeVisible({ timeout: 15_000 });
+
+    const flipped = await rec.evaluate(() => {
+      window.__recorder.state.blurBg = !window.__recorder.state.blurBg;
+      return window.__recorder.state.blurBg;
+    });
+    expect(flipped).toBe(false);
+  });
 });

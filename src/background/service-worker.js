@@ -654,10 +654,19 @@ async function toggleRecording(options = {}) {
     try { await chrome.windows.remove(existing.windowId); } catch (_) { /* gone */ }
   }
 
+  const quality = ["720", "1080", "1440"].includes(String(options.quality))
+    ? String(options.quality)
+    : "720";
+  const pip = ["bl", "bc", "br"].includes(String(options.pip))
+    ? String(options.pip)
+    : "bc";
   const qs = new URLSearchParams({
     cam: options.camera ? "1" : "0",
     mic: options.mic ? "1" : "0",
     audio: options.systemAudio ? "1" : "0",
+    q: quality,
+    pip,
+    blur: options.blur ? "1" : "0",
     autostart: "1",
   });
   const win = await chrome.windows.create({
@@ -844,7 +853,14 @@ chrome.commands.onCommand.addListener(async (command) => {
       const prefs = (await chrome.storage.local.get("recPrefs")).recPrefs || {};
       await toggleRecording(recordingState?.active
         ? {}
-        : { camera: !!prefs.camera, mic: !!prefs.mic, systemAudio: !!prefs.systemAudio });
+        : {
+          camera: !!prefs.camera,
+          mic: !!prefs.mic,
+          systemAudio: !!prefs.systemAudio,
+          quality: prefs.quality || "720",
+          pip: prefs.pip || "bc",
+          blur: !!prefs.blur,
+        });
     } else {
       await runCapture(command);
     }
