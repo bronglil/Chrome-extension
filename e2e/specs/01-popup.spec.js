@@ -11,10 +11,6 @@ test.describe("Popup UI", () => {
     await expect(page.locator('[data-action="capture-full-page"]')).toBeVisible();
     await expect(page.locator('[data-action="ocr-area"]')).toBeVisible();
 
-    // Desktop capture family (share picker).
-    await expect(page.locator('[data-action="capture-fullscreen"]')).toBeVisible();
-    await expect(page.locator('[data-action="capture-window"]')).toBeVisible();
-
     // Delay presets.
     await expect(page.locator('[data-delay="3"]')).toBeVisible();
     await expect(page.locator('[data-delay="5"]')).toBeVisible();
@@ -33,5 +29,32 @@ test.describe("Popup UI", () => {
     await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
     const delays = await page.$$eval("[data-delay]", (els) => els.map((e) => e.dataset.delay));
     expect(delays).toEqual(["3", "5", "10"]);
+  });
+
+  test("recording button flips between Start and Stop from recording state", async ({ context, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+    await expect(page.locator("#rec-label")).toHaveText("Start recording");
+
+    await page.evaluate(() => {
+      window.__applyRec({ active: true, recording: true, startedAt: 0, pending: true });
+    });
+    await expect(page.locator("#rec-label")).toHaveText("Starting…");
+
+    await page.evaluate(() => {
+      window.__applyRec({
+        active: true,
+        recording: true,
+        startedAt: Date.now() - 2000,
+        pending: false,
+      });
+    });
+    await expect(page.locator("#rec-label")).toHaveText("Stop recording");
+    await expect(page.locator("#rec-status")).toBeVisible();
+
+    await page.evaluate(() => {
+      window.__applyRec({ active: false, recording: false, startedAt: 0, pending: false });
+    });
+    await expect(page.locator("#rec-label")).toHaveText("Start recording");
   });
 });

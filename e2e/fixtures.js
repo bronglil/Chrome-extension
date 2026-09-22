@@ -34,8 +34,10 @@ const test = base.test.extend({
       args: [
         `--disable-extensions-except=${EXT_ROOT}`,
         `--load-extension=${EXT_ROOT}`,
+        "--disable-features=DisableLoadExtensionCommandLineSwitch",
         "--no-sandbox",
         "--auto-accept-this-tab-capture",
+        "--auto-select-desktop-capture-source=Entire screen",
         "--use-fake-ui-for-media-stream",
         "--use-fake-device-for-media-stream",
       ],

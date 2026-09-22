@@ -52,6 +52,13 @@ test.describe("PDF editor", () => {
     await page.mouse.move(box.x + 360, box.y + 80);
     await page.mouse.up();
     expect(await overlayCount(page, ".highlight")).toBe(1);
+    const pts = await page.evaluate(
+      () => window.__pdfEditor.state.overlayLayer.findOne(".highlight").points()
+    );
+    expect(pts[0]).toBeGreaterThan(40);
+    expect(pts[0]).toBeLessThan(90);
+    expect(pts[1]).toBeGreaterThan(60);
+    expect(pts[1]).toBeLessThan(110);
     // Highlight uses multiply blending so underlying text stays readable.
     const gco = await page.evaluate(
       () => window.__pdfEditor.state.overlayLayer.findOne(".highlight").globalCompositeOperation()

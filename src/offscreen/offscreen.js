@@ -15,6 +15,17 @@ const blobToDataUrl = U.blobToDataUrl || ((blob) => new Promise((resolve, reject
 let recorder = null;
 let recordedChunks = [];
 let activeStream = null;
+const heldCaptures = new Map();
+
+function holdCapture(id, payload) {
+  if (!id || !payload?.dataUrl) return;
+  heldCaptures.set(id, payload);
+  while (heldCaptures.size > 4) {
+    const oldest = heldCaptures.keys().next().value;
+    heldCaptures.delete(oldest);
+  }
+  setTimeout(() => heldCaptures.delete(id), 120000);
+}
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.target !== "offscreen") return false;
@@ -33,6 +44,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           break;
         case "OCR_CROP":
           sendResponse(await ocrCrop(msg.dataUrl, msg.rect));
+          break;
+        case "HOLD_CAPTURE":
+          holdCapture(msg.id, { dataUrl: msg.dataUrl, meta: msg.meta, createdAt: msg.createdAt });
+          sendResponse({ ok: true });
+          break;
+        case "TAKE_CAPTURE": {
+          const held = heldCaptures.get(msg.id) || null;
+          if (held) heldCaptures.delete(msg.id);
+          sendResponse(held || {});
+          break;
+        }
+        case "DROP_CAPTURE":
+          heldCaptures.delete(msg.id);
+          sendResponse({ ok: true });
           break;
         default:
           sendResponse({ error: "offscreen: unknown " + msg.type });
@@ -156,8 +181,8 @@ function loadImage(src) {
 }
 
 function preprocessForOcr(src) {
-  const MIN_DIM = 1600;
-  const scale = Math.min(3, Math.max(1, MIN_DIM / Math.max(src.width, src.height)));
+  const MIN_DIM = 960;
+  const scale = Math.min(2, Math.max(1, MIN_DIM / Math.max(src.width, src.height)));
   const w = Math.round(src.width * scale);
   const h = Math.round(src.height * scale);
   const c = document.createElement("canvas");
@@ -234,7 +259,7 @@ async function ocrCrop(dataUrl, rect) {
   const crop = document.createElement("canvas");
   crop.width = w;
   crop.height = h;
-  crop.getContext("2d").drawImage(img, x, y, w, h, 0, 0, w, h);
+  crop.getContext("2d", { willReadFrequently: true }).drawImage(img, x, y, w, h, 0, 0, w, h);
   const worker = await getOcrWorker();
   const { data } = await worker.recognize(preprocessForOcr(crop));
   const text = (data.text || "").trim();

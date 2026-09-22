@@ -75,6 +75,7 @@
       function cleanup() {
         nodes.forEach((n) => n.remove());
         document.removeEventListener("keydown", onKey, true);
+        window.removeEventListener("mouseup", onUp, true);
       }
       function onKey(e) {
         if (e.key === "Escape") {
@@ -83,20 +84,7 @@
           resolve(null);
         }
       }
-      document.addEventListener("keydown", onKey, true);
-
-      overlay.addEventListener("mousedown", (e) => {
-        dragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        sel.style.display = "block";
-        dims.style.display = "block";
-        update(e.clientX, e.clientY);
-      });
-      overlay.addEventListener("mousemove", (e) => {
-        if (dragging) update(e.clientX, e.clientY);
-      });
-      window.addEventListener("mouseup", (e) => {
+      function onUp(e) {
         if (!dragging) return;
         dragging = false;
         const rect = geom(e.clientX, e.clientY);
@@ -109,6 +97,20 @@
           width: Math.round(rect.w * dpr),
           height: Math.round(rect.h * dpr),
         });
+      }
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener("mouseup", onUp, true);
+
+      overlay.addEventListener("mousedown", (e) => {
+        dragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        sel.style.display = "block";
+        dims.style.display = "block";
+        update(e.clientX, e.clientY);
+      });
+      overlay.addEventListener("mousemove", (e) => {
+        if (dragging) update(e.clientX, e.clientY);
       });
 
       function geom(curX, curY) {
@@ -170,9 +172,8 @@
     liveCopy.copyBtn.disabled = !t;
     if (t) {
       navigator.clipboard.writeText(t).catch(() => {});
+      chrome.runtime.sendMessage({ type: "CLIP_REMEMBER", text: t }).catch(() => {});
       liveCopy.copyBtn.textContent = "Copied";
-      liveCopy.area.focus();
-      liveCopy.area.select();
     }
     return { ok: true };
   }
@@ -299,13 +300,16 @@
         bar.style.top = top + "px";
         bar.hidden = true;
 
-        copyBtn.addEventListener("click", async () => {
+        const dismiss = async () => {
           const value = area.value;
-          if (!value || value === "Reading text…") return;
-          try { await navigator.clipboard.writeText(value); } catch (_) { /* keep panel */ }
-          copyBtn.textContent = "Copied";
-        });
-        doneBtn.addEventListener("click", cleanup);
+          if (value && value !== "Reading text…") {
+            try { await navigator.clipboard.writeText(value); } catch (_) { /* still close */ }
+            chrome.runtime.sendMessage({ type: "CLIP_REMEMBER", text: value }).catch(() => {});
+          }
+          cleanup();
+        };
+        copyBtn.addEventListener("click", dismiss);
+        doneBtn.addEventListener("click", dismiss);
         return { bar, area, copyBtn };
       }
 
@@ -316,7 +320,7 @@
         liveCopy = { ...panel, overlay, nodes: [overlay, sel, panel.bar] };
         // Hide the box so the screenshot (and OCR) sees the real page, like Shottr.
         [overlay, sel, panel.bar].forEach((n) => { n.style.visibility = "hidden"; });
-        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        await new Promise((r) => requestAnimationFrame(r));
         settled = true;
         resolve({
           deviceRect: {

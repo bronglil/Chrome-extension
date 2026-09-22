@@ -70,8 +70,16 @@ async function boot() {
   const id = params.get("id");
   if (id) {
     const key = "capture:" + id;
-    const stored = (await chrome.storage.local.get(key))[key];
-    if (stored) {
+    let stored = null;
+    for (let i = 0; i < 8 && !stored?.dataUrl; i++) {
+      try {
+        stored = await chrome.runtime.sendMessage({ type: "TAKE_CAPTURE", id });
+        if (!stored?.dataUrl) stored = null;
+      } catch (_) { stored = null; }
+      if (!stored?.dataUrl) await new Promise((r) => setTimeout(r, 80 * (i + 1)));
+    }
+    if (!stored) stored = (await chrome.storage.local.get(key))[key];
+    if (stored?.dataUrl) {
       state.meta = stored.meta || {};
       state.createdAt = stored.createdAt || Date.now();
       const img = await loadImage(stored.dataUrl);
@@ -80,8 +88,8 @@ async function boot() {
         : img;
       await initStage(final);
       renderSource();
-      // Free the storage entry once loaded.
       chrome.storage.local.remove(key);
+      if (U.deleteCapture) U.deleteCapture(id).catch(() => {});
       return;
     }
   }
@@ -281,12 +289,50 @@ document.querySelectorAll(".ed-tool").forEach((btn) => {
   });
 });
 
-function contentPointer() {
-  // Pointer position in content (image) coordinates.
-  const p = state.stage?.getPointerPosition();
-  if (!p) return null;
+function contentPointer(evt) {
+  const stage = state.stage;
+  if (!stage) return null;
   const pad = props.pad();
-  return { x: p.x - pad, y: p.y - pad };
+  const nativeW = state.imgW + pad * 2;
+  const nativeH = state.imgH + pad * 2;
+  const el = stage.container().querySelector("canvas") || stage.container();
+  const box = el.getBoundingClientRect();
+  const native = evt && evt.evt ? evt.evt : evt;
+  let cx, cy;
+  if (native && native.touches && native.touches[0]) {
+    cx = native.touches[0].clientX;
+    cy = native.touches[0].clientY;
+  } else if (native && native.changedTouches && native.changedTouches[0]) {
+    cx = native.changedTouches[0].clientX;
+    cy = native.changedTouches[0].clientY;
+  } else if (native && typeof native.clientX === "number") {
+    cx = native.clientX;
+    cy = native.clientY;
+  }
+  if (typeof cx === "number" && box.width && box.height && nativeW && nativeH) {
+    return {
+      x: ((cx - box.left) / box.width) * nativeW - pad,
+      y: ((cy - box.top) / box.height) * nativeH - pad,
+    };
+  }
+  const p = stage.getPointerPosition();
+  if (!p) return null;
+  const scale = stage.scaleX() || 1;
+  return { x: p.x / scale - pad, y: p.y / scale - pad };
+}
+
+function onDocDrawMove(e) {
+  if (!state.drawing) return;
+  if (e.cancelable && e.type === "touchmove") e.preventDefault();
+  const pos = contentPointer(e);
+  if (pos) updateDrawing(pos);
+}
+function onDocDrawUp() {
+  window.removeEventListener("mousemove", onDocDrawMove, true);
+  window.removeEventListener("mouseup", onDocDrawUp, true);
+  window.removeEventListener("touchmove", onDocDrawMove, true);
+  window.removeEventListener("touchend", onDocDrawUp, true);
+  if (state.drawing) finishDrawing();
 }
 
 function bindStageEvents() {
@@ -298,20 +344,26 @@ function bindStageEvents() {
       if (e.target === state.baseImage || e.target === stage) state.transformer.nodes([]);
       return;
     }
-    const pos = contentPointer();
+    const pos = contentPointer(e);
     if (!pos) return;
     startDrawing(pos);
+    if (state.drawing) {
+      window.addEventListener("mousemove", onDocDrawMove, true);
+      window.addEventListener("mouseup", onDocDrawUp, true);
+      window.addEventListener("touchmove", onDocDrawMove, { capture: true, passive: false });
+      window.addEventListener("touchend", onDocDrawUp, true);
+    }
   });
 
-  stage.on("mousemove touchmove", () => {
+  stage.on("mousemove touchmove", (e) => {
     if (!state.drawing) return;
-    const pos = contentPointer();
+    const pos = contentPointer(e);
     if (!pos) return;
     updateDrawing(pos);
   });
 
   stage.on("mouseup touchend", () => {
-    if (state.drawing) finishDrawing();
+    onDocDrawUp();
   });
 
   // Selecting a shape with the select tool.
@@ -435,6 +487,7 @@ function updateDrawing(pos) {
 }
 
 function finishDrawing() {
+  if (!state.drawing) return;
   const { node, tool } = state.drawing;
   state.drawing = null;
 
