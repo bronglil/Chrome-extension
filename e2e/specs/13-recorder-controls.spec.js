@@ -354,4 +354,68 @@ test.describe("Popup recording prefs", () => {
     const tool = await rec.evaluate(() => window.__recorder.state.inkTool);
     expect(tool).toBeNull();
   });
+
+  test("click ripple and key badge paint into compositor; toggle clears cues", async ({ context, extensionId }) => {
+    test.setTimeout(45_000);
+    const rec = await openStudio(context, extensionId);
+    await goLive(rec);
+
+    await expect(rec.locator("#btn-cues")).toBeVisible();
+    await expect(rec.locator("#btn-cues")).toHaveClass(/is-on/);
+
+    const withCues = await rec.evaluate(() => {
+      const R = window.__recorder;
+      R.state.cuesOn = true;
+      R.spawnRipple(400, 300);
+      R.spawnBadge("Ctrl+S");
+      R._paintNow();
+      const ctx = R.state.canvas.getContext("2d");
+      const near = ctx.getImageData(400, 300, 1, 1).data;
+      // Badge sits near bottom-center of 1280×720
+      const badge = ctx.getImageData(640, 638, 1, 1).data;
+      return {
+        ripples: R.state.ripples.length,
+        badges: R.state.keyBadges.length,
+        near: [near[0], near[1], near[2]],
+        badge: [badge[0], badge[1], badge[2]],
+      };
+    });
+    expect(withCues.ripples).toBeGreaterThan(0);
+    expect(withCues.badges).toBe(1);
+    // Ripple center fill is indigo-ish or bright vs dark waiting bg
+    expect(withCues.near[0] + withCues.near[1] + withCues.near[2]).toBeGreaterThan(40);
+    // Badge panel is dark gray with light text region around it — sample should not be pure black
+    expect(withCues.badge[0] + withCues.badge[1] + withCues.badge[2]).toBeGreaterThan(20);
+
+    await rec.click("#btn-cues");
+    await expect(rec.locator("#btn-cues")).not.toHaveClass(/is-on/);
+    const off = await rec.evaluate(() => {
+      const R = window.__recorder;
+      R.spawnRipple(400, 300);
+      R.spawnBadge("Esc");
+      R._paintNow();
+      return {
+        cuesOn: R.state.cuesOn,
+        ripples: R.state.ripples.length,
+        badges: R.state.keyBadges.length,
+      };
+    });
+    expect(off.cuesOn).toBe(false);
+    expect(off.ripples).toBe(0);
+    expect(off.badges).toBe(0);
+  });
+
+  test("popup persists click & key cues preference", async ({ context, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+    await page.locator("#rec-cues").uncheck();
+    await page.waitForTimeout(200);
+    const stored = await page.evaluate(async () => {
+      const { recPrefs } = await chrome.storage.local.get("recPrefs");
+      return recPrefs;
+    });
+    expect(stored.cues).toBe(false);
+    await page.reload();
+    await expect(page.locator("#rec-cues")).not.toBeChecked();
+  });
 });

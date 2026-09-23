@@ -16,6 +16,7 @@ const opts = {
   quality: ["720", "1080", "1440"].includes(params.get("q")) ? params.get("q") : "720",
   pip: ["bl", "bc", "br"].includes(params.get("pip")) ? params.get("pip") : "bc",
   blur: params.get("blur") === "1",
+  cues: params.get("cues") !== "0",
 };
 
 const QUALITY = {
@@ -68,6 +69,9 @@ const state = {
   inkStrokes: [],
   inkCurrent: null,
   inkOpen: false,
+  cuesOn: !!opts.cues,
+  ripples: [],
+  keyBadges: [],
 };
 
 function toast(msg, ms = 2400) {
@@ -93,6 +97,7 @@ function flags() {
     },
     { label: `${opts.quality}p`, on: true },
     { label: state.blurBg ? "Blur on" : "Blur off", on: !!state.blurBg },
+    { label: state.cuesOn ? "Cues on" : "Cues off", on: !!state.cuesOn },
   ];
   $("#flags").innerHTML = bits.map((b) => {
     const cls = ["flag", b.on ? "is-on" : "", b.live ? "is-live" : ""].filter(Boolean).join(" ");
@@ -160,6 +165,12 @@ function syncToggleUi() {
     annBtn.hidden = !state.startedAt;
     annBtn.classList.toggle("is-on", !!state.inkOpen || !!state.inkTool);
     annBtn.title = state.inkOpen ? "Hide draw tools" : "Draw on recording";
+  }
+  const cuesBtn = $("#btn-cues");
+  if (cuesBtn) {
+    cuesBtn.hidden = !state.startedAt;
+    cuesBtn.classList.toggle("is-on", !!state.cuesOn);
+    cuesBtn.title = state.cuesOn ? "Hide click & key cues" : "Show click & key cues";
   }
   const banner = $("#paused-banner");
   if (banner) banner.hidden = !state.paused;
@@ -585,10 +596,11 @@ function paintInkOverlay() {
   }
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, w, h);
-  if (!state.inkStrokes.length && !state.inkCurrent) return;
+  if (!state.inkStrokes.length && !state.inkCurrent && !state.ripples.length && !state.keyBadges.length) return;
   ctx.save();
   ctx.scale(w / OUT_W, h / OUT_H);
   drawInkLayer(ctx);
+  drawCuesLayer(ctx, OUT_W, OUT_H);
   ctx.restore();
 }
 
@@ -693,6 +705,7 @@ function onInkPointerDown(e) {
   e.preventDefault();
   const pt = clientToInk(e.clientX, e.clientY);
   if (!pt) return;
+  spawnRipple(pt.x, pt.y);
   const hit = $("#ink-hit");
   hit?.setPointerCapture?.(e.pointerId);
   if (state.inkTool === "eraser") {
@@ -739,6 +752,135 @@ function onInkPointerUp() {
   paintInkOverlay();
 }
 
+/* -------------------------------------------------------------------------- */
+/* Click ripples + key badges (#41) — compositor cues                         */
+/* -------------------------------------------------------------------------- */
+
+const RIPPLE_MS = 520;
+const BADGE_MS = 1100;
+
+function spawnRipple(x, y) {
+  if (!state.cuesOn || !state.startedAt || state.paused) return;
+  state.ripples.push({ x, y, t0: performance.now() });
+  if (state.ripples.length > 12) state.ripples.shift();
+}
+
+function spawnBadge(label) {
+  if (!state.cuesOn || !state.startedAt || state.paused || !label) return;
+  const last = state.keyBadges[state.keyBadges.length - 1];
+  if (last && last.label === label && performance.now() - last.t0 < 180) return;
+  state.keyBadges.push({ label, t0: performance.now() });
+  if (state.keyBadges.length > 4) state.keyBadges.shift();
+}
+
+function pruneCues(now) {
+  state.ripples = state.ripples.filter((r) => now - r.t0 < RIPPLE_MS);
+  state.keyBadges = state.keyBadges.filter((b) => now - b.t0 < BADGE_MS);
+}
+
+function drawCuesLayer(ctx, W, H) {
+  const now = performance.now();
+  pruneCues(now);
+  for (const r of state.ripples) {
+    const p = Math.min(1, (now - r.t0) / RIPPLE_MS);
+    const radius = 10 + p * Math.max(36, W * 0.035);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255,255,255,${(1 - p) * 0.85})`;
+    ctx.lineWidth = Math.max(2.5, W / 420);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, Math.max(3, radius * 0.22), 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(99,102,241,${(1 - p) * 0.55})`;
+    ctx.fill();
+    ctx.restore();
+  }
+  if (!state.keyBadges.length) return;
+  const badge = state.keyBadges[state.keyBadges.length - 1];
+  const p = Math.min(1, (now - badge.t0) / BADGE_MS);
+  const alpha = p < 0.15 ? p / 0.15 : p > 0.7 ? (1 - p) / 0.3 : 1;
+  const padX = Math.max(18, W * 0.018);
+  const padY = Math.max(10, H * 0.012);
+  const fontSize = Math.max(18, Math.round(W * 0.022));
+  ctx.save();
+  ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const tw = ctx.measureText(badge.label).width;
+  const bw = tw + padX * 2;
+  const bh = fontSize + padY * 2;
+  const bx = W / 2 - bw / 2;
+  const by = H - Math.max(48, H * 0.08) - bh;
+  const rr = Math.min(14, bh / 2);
+  ctx.globalAlpha = Math.max(0, alpha);
+  ctx.fillStyle = "rgba(17,24,39,0.82)";
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, rr);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.22)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = "#f3f4f6";
+  ctx.fillText(badge.label, W / 2, by + bh / 2);
+  ctx.restore();
+}
+
+function keyBadgeLabel(e) {
+  if (e.repeat) return null;
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || "");
+  const mod = [];
+  if (e.metaKey) mod.push(isMac ? "⌘" : "Win");
+  if (e.ctrlKey) mod.push(isMac ? "Ctrl" : "Ctrl");
+  if (e.altKey) mod.push(isMac ? "⌥" : "Alt");
+  if (e.shiftKey && (e.metaKey || e.ctrlKey || e.altKey || /^Arrow|Enter|Tab|Escape|Backspace|Delete|Home|End|Page/.test(e.key))) {
+    mod.push("⇧");
+  }
+
+  const special = {
+    Escape: "Esc",
+    Enter: "Enter",
+    Tab: "Tab",
+    Backspace: "⌫",
+    Delete: "Del",
+    ArrowLeft: "←",
+    ArrowRight: "→",
+    ArrowUp: "↑",
+    ArrowDown: "↓",
+    Home: "Home",
+    End: "End",
+    PageUp: "PgUp",
+    PageDown: "PgDn",
+    " ": "Space",
+  };
+
+  if (special[e.key]) {
+    // Bare modifier keys alone
+    if (["Control", "Meta", "Alt", "Shift"].includes(e.key)) return null;
+    return mod.length ? `${mod.join("")}${special[e.key]}` : special[e.key];
+  }
+
+  // Only letter/digit keys when a non-shift modifier is held (shortcuts, not typing).
+  if ((e.metaKey || e.ctrlKey || e.altKey) && e.key.length === 1) {
+    const k = e.key.toUpperCase();
+    if (e.shiftKey && !mod.includes("⇧")) mod.push("⇧");
+    return `${mod.join("")}${k}`;
+  }
+  return null;
+}
+
+function toggleCues() {
+  if (!state.startedAt) return;
+  state.cuesOn = !state.cuesOn;
+  if (!state.cuesOn) {
+    state.ripples = [];
+    state.keyBadges = [];
+  }
+  syncToggleUi();
+  flags();
+  toast(state.cuesOn ? "Click & key cues on" : "Click & key cues off");
+}
+
 function startComposer() {
   const canvas = document.createElement("canvas");
   canvas.width = OUT_W;
@@ -763,8 +905,13 @@ function startComposer() {
     }
     // Ink between screen and camera PiP so annotations stay under the presenter bubble.
     drawInkLayer(ctx);
+    drawCuesLayer(ctx, OUT_W, OUT_H);
     if (opts.camera && state.camera && !state.camOff && camEl.readyState >= 2 && camEl.videoWidth) {
       drawPip(ctx, camEl, OUT_W, OUT_H);
+    }
+    // Keep studio overlay in sync with animated cues.
+    if (state.cuesOn && (state.ripples.length || state.keyBadges.length || state.inkStrokes.length || state.inkCurrent)) {
+      paintInkOverlay();
     }
   };
   tick();
@@ -992,6 +1139,9 @@ async function start() {
   state.inkTool = null;
   state.inkOpen = false;
   state.inkColor = "#ef4444";
+  state.cuesOn = !!opts.cues;
+  state.ripples = [];
+  state.keyBadges = [];
   setLiveUi(true);
   flags();
   liveStatus();
@@ -1261,6 +1411,7 @@ $("#btn-cam")?.addEventListener("click", toggleCamera);
 $("#btn-pip-pos")?.addEventListener("click", cyclePip);
 $("#btn-blur")?.addEventListener("click", toggleBlur);
 $("#btn-annotate")?.addEventListener("click", toggleAnnotateDock);
+$("#btn-cues")?.addEventListener("click", toggleCues);
 $("#btn-discard")?.addEventListener("click", discard);
 $("#btn-cancel-count")?.addEventListener("click", () => {
   if (state.starting && !state.recorder) stop();
@@ -1283,11 +1434,20 @@ inkHit?.addEventListener("pointermove", onInkPointerMove);
 inkHit?.addEventListener("pointerup", onInkPointerUp);
 inkHit?.addEventListener("pointercancel", onInkPointerUp);
 window.addEventListener("resize", () => paintInkOverlay());
+$("#preview")?.addEventListener("pointerdown", (e) => {
+  if (!state.cuesOn || !state.startedAt || state.paused || state.inkTool) return;
+  if (e.target.closest?.("#person-panel, .paused-banner, #ink-hit")) return;
+  const pt = clientToInk(e.clientX, e.clientY);
+  if (pt) spawnRipple(pt.x, pt.y);
+});
+
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && (state.inkOpen || state.inkTool)) {
     e.preventDefault();
     closeInkMode();
   }
+  const label = keyBadgeLabel(e);
+  if (label) spawnBadge(label);
 });
 
 window.addEventListener("beforeunload", () => {
@@ -1321,6 +1481,9 @@ window.__recorder = {
   clearInk,
   closeInkMode,
   toggleAnnotateDock,
+  toggleCues,
+  spawnRipple,
+  spawnBadge,
   /** Inject a stroke in compositor space (e2e). */
   _addInkStroke(stroke) {
     state.inkStrokes.push(stroke);
@@ -1340,6 +1503,7 @@ window.__recorder = {
       drawWaiting(ctx, OUT_W, OUT_H);
     }
     drawInkLayer(ctx);
+    drawCuesLayer(ctx, OUT_W, OUT_H);
     if (opts.camera && state.camera && !state.camOff && camEl.readyState >= 2 && camEl.videoWidth) {
       drawPip(ctx, camEl, OUT_W, OUT_H);
     }

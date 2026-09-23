@@ -667,6 +667,7 @@ async function toggleRecording(options = {}) {
     q: quality,
     pip,
     blur: options.blur ? "1" : "0",
+    cues: options.cues === false || options.cues === 0 || options.cues === "0" ? "0" : "1",
     autostart: "1",
   });
   const win = await chrome.windows.create({
@@ -860,6 +861,7 @@ chrome.commands.onCommand.addListener(async (command) => {
           quality: prefs.quality || "720",
           pip: prefs.pip || "bc",
           blur: !!prefs.blur,
+          cues: prefs.cues !== false,
         });
     } else {
       await runCapture(command);
