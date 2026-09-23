@@ -771,8 +771,14 @@ function bindStage(view) {
       return;
     }
     if (state.tool === "pen" || state.tool === "highlight") startDraw(e);
+    if (state.tool === "redact") startRedact(e);
   });
-  stage.on("mousemove.pdfed touchmove.pdfed", (e) => { if (state.drawing) extendDraw(e); });
+  stage.on("mousemove.pdfed touchmove.pdfed", (e) => {
+    if (state.drawing) {
+      if (state.drawing.tool === "redact") extendRedact(e);
+      else extendDraw(e);
+    }
+  });
   stage.on("mouseup.pdfed touchend.pdfed", endDraw);
 
   stage.on("click.pdfed tap.pdfed", (e) => {
@@ -852,7 +858,9 @@ function clientFromStage(x, y, stage = state.stage) {
 
 function onDocDrawMove(e) {
   if (e.cancelable && e.type === "touchmove") e.preventDefault();
-  if (state.drawing) extendDraw(e);
+  if (!state.drawing) return;
+  if (state.drawing.tool === "redact") extendRedact(e);
+  else extendDraw(e);
 }
 function onDocDrawUp() {
   endDraw();
@@ -860,7 +868,20 @@ function onDocDrawUp() {
 
 function endDraw() {
   if (state.drawing) {
-    try { state.drawing.node.draggable(true); } catch (_) { /* ignore */ }
+    if (state.drawing.tool === "redact") {
+      const node = state.drawing.node;
+      if (node.width() < 4 || node.height() < 4) node.destroy();
+      else {
+        node.fill("#000000");
+        node.strokeEnabled(false);
+        node.opacity(1);
+        node.dash([]);
+        node.name("redact");
+        try { node.draggable(true); } catch (_) { /* ignore */ }
+      }
+    } else {
+      try { state.drawing.node.draggable(true); } catch (_) { /* ignore */ }
+    }
     state.drawing = null;
   }
   window.removeEventListener("mousemove", onDocDrawMove, true);
@@ -897,6 +918,36 @@ function extendDraw(evt) {
   const p = pointer(evt);
   if (!p || !state.drawing) return;
   state.drawing.node.points(state.drawing.node.points().concat([p.x, p.y]));
+  state.overlayLayer.batchDraw();
+}
+
+function startRedact(evt) {
+  const p = pointer(evt);
+  if (!p) return;
+  const node = new Konva.Rect({
+    x: p.x, y: p.y, width: 0, height: 0,
+    fill: "rgba(0,0,0,0.55)",
+    stroke: "#111827",
+    strokeWidth: 1,
+    dash: [4, 4],
+    name: "redact-marquee",
+  });
+  state.overlayLayer.add(node);
+  state.drawing = { node, start: p, tool: "redact" };
+  window.addEventListener("mousemove", onDocDrawMove, true);
+  window.addEventListener("mouseup", onDocDrawUp, true);
+  window.addEventListener("touchmove", onDocDrawMove, { capture: true, passive: false });
+  window.addEventListener("touchend", onDocDrawUp, true);
+}
+
+function extendRedact(evt) {
+  const p = pointer(evt);
+  if (!p || !state.drawing || state.drawing.tool !== "redact") return;
+  const { node, start } = state.drawing;
+  node.x(Math.min(start.x, p.x));
+  node.y(Math.min(start.y, p.y));
+  node.width(Math.abs(p.x - start.x));
+  node.height(Math.abs(p.y - start.y));
   state.overlayLayer.batchDraw();
 }
 
@@ -1291,28 +1342,18 @@ async function exportPdf() {
       const num = +annotated[i];
       progress("Embedding page " + num + "…", 0.1 + 0.8 * (i / annotated.length));
       const extra = userRotation(num);
-      const page = pages[num - 1];
+      const mustBurn = extra || pageHasRedact(num);
 
-      if (extra) {
-        // Bake rotated page + overlays into one image; reset /Rotate so the
-        // viewer does not spin the bitmap again.
+      if (mustBurn) {
+        // Bake page + overlays into one image, then REPLACE the page so underlying
+        // text/content streams cannot be recovered (true redaction).
         const flat = await flattenPageVisual(num);
         if (!flat) continue;
-        const png = await pdf.embedPng(flat);
-        const vis = state.pageSizes[num] || { w: png.width, h: png.height };
-        const { width, height } = page.getSize();
-        page.setRotation(degrees(0));
-        const visualLandscape = vis.w >= vis.h;
-        const boxLandscape = width >= height;
-        if (visualLandscape !== boxLandscape) {
-          page.setSize(height, width);
-          page.drawImage(png, { x: 0, y: 0, width: height, height: width });
-        } else {
-          page.drawImage(png, { x: 0, y: 0, width, height });
-        }
+        await replacePageWithImage(pdf, num - 1, flat, extra ? degrees(0) : null);
         continue;
       }
 
+      const page = pdf.getPages()[num - 1];
       const pngDataUrl = await overlayPng(num);
       if (!pngDataUrl) continue;
       const png = await pdf.embedPng(pngDataUrl);
@@ -1431,8 +1472,63 @@ async function flattenPageVisual(num) {
   return canvas.toDataURL("image/png");
 }
 
+/** True if page overlay JSON (or live layer) includes a permanent redact rect. */
+function pageHasRedact(num) {
+  try {
+    if (state.pageNum === num && state.overlayLayer) {
+      if (state.overlayLayer.find(".redact").length) return true;
+    }
+    const raw = state.pageOverlays[num];
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    const walk = (nodes) => {
+      for (const n of nodes || []) {
+        if (n.attrs?.name === "redact" || n.attrs?.name === "redact-marquee") return true;
+        if (n.children && walk(n.children)) return true;
+      }
+      return false;
+    };
+    return walk(parsed.children);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Replace a PDF page with an image-only page so prior content streams
+ * (selectable text) cannot be recovered — required for true redaction.
+ */
+async function replacePageWithImage(pdf, pageIndex, dataUrl, forceRotation) {
+  const pages = pdf.getPages();
+  const page = pages[pageIndex];
+  let { width, height } = page.getSize();
+  const png = await pdf.embedPng(dataUrl);
+  const visW = png.width;
+  const visH = png.height;
+  const visualLandscape = visW >= visH;
+  const boxLandscape = width >= height;
+  if (visualLandscape !== boxLandscape) {
+    // Match media box to baked visual orientation (same as prior rotate flatten).
+    const tmp = width;
+    width = height;
+    height = tmp;
+  }
+  if (forceRotation != null) {
+    try { page.setRotation(forceRotation); } catch (_) { /* ignore */ }
+  }
+  // Insert a blank page with only the bitmap, then drop the original page
+  // (which still held text/content streams underneath any overlay).
+  const blank = pdf.insertPage(pageIndex, [width, height]);
+  if (forceRotation != null) {
+    try { blank.setRotation(forceRotation); } catch (_) { /* ignore */ }
+  }
+  blank.drawImage(png, { x: 0, y: 0, width, height });
+  pdf.removePage(pageIndex + 1);
+}
+
 // Expose a couple of internals for E2E tests.
 window.__pdfEditor = {
   state, openPdf, exportPdf, chooseAckSide, editText, addTextAt, goToPage,
   pointer, clientFromStage, rotatePage, userRotation, totalRotation, rotateScope,
+  pageHasRedact, flattenPageVisual, replacePageWithImage,
 };

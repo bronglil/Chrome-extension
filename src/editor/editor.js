@@ -43,6 +43,7 @@ const state = {
   tool: "select",
   stepCount: 0,
   undoStack: [],
+  baseHistory: [], // data URLs of base bitmap before each redact (session undo)
   drawing: null,
   meta: {},
   createdAt: 0,
@@ -443,6 +444,13 @@ function startDrawing(pos) {
         stroke: "#3b82f6", strokeWidth: 1, dash: [4, 4], name: "blur-marquee",
       });
       break;
+    case "redact":
+      node = new Konva.Rect({
+        x: pos.x, y: pos.y, width: 0, height: 0,
+        stroke: "#111827", strokeWidth: 1, dash: [4, 4],
+        fill: "rgba(0,0,0,0.45)", name: "redact-marquee",
+      });
+      break;
     case "crop":
       node = new Konva.Rect({
         x: pos.x, y: pos.y, width: 0, height: 0,
@@ -463,7 +471,7 @@ function updateDrawing(pos) {
     case "arrow":
       node.points([start.x, start.y, pos.x, pos.y]);
       break;
-    case "rect": case "blur": case "crop": {
+    case "rect": case "blur": case "redact": case "crop": {
       node.x(Math.min(start.x, pos.x));
       node.y(Math.min(start.y, pos.y));
       node.width(Math.abs(pos.x - start.x));
@@ -495,6 +503,10 @@ function finishDrawing() {
     const rect = node.getClientRect({ relativeTo: state.content });
     node.destroy();
     if (rect.width > 4 && rect.height > 4) applyBlur(rect);
+  } else if (tool === "redact") {
+    const rect = node.getClientRect({ relativeTo: state.content });
+    node.destroy();
+    if (rect.width > 4 && rect.height > 4) applyRedact(rect);
   } else if (tool === "crop") {
     // Leave the marquee; "Apply crop" reads it.
     node.name("crop-marquee-final");
@@ -650,6 +662,57 @@ function applyBlur(rect) {
   state.contentLayer.draw();
 }
 
+// True redaction: permanently overwrite base pixels (black + light noise).
+// Unlike blur, deleting annotations cannot recover the original content.
+function applyRedact(rect) {
+  const region = clampRect(rect, state.imgW, state.imgH);
+  if (region.width < 2 || region.height < 2) return;
+  const src = getBaseCanvas();
+  if (!src) return;
+
+  try {
+    state.baseHistory.push(src.toDataURL("image/png"));
+    if (state.baseHistory.length > 20) state.baseHistory.shift();
+  } catch (_) { /* ignore */ }
+
+  const ctx = src.getContext("2d");
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(region.x, region.y, region.width, region.height);
+  // Light noise shred so reconstructed OCR of a solid field is harder.
+  try {
+    const id = ctx.getImageData(region.x, region.y, region.width, region.height);
+    for (let i = 0; i < id.data.length; i += 4) {
+      const n = (Math.random() * 22) | 0;
+      id.data[i] = n;
+      id.data[i + 1] = n;
+      id.data[i + 2] = n;
+      id.data[i + 3] = 255;
+    }
+    ctx.putImageData(id, region.x, region.y);
+  } catch (_) { /* tainted canvas — solid black is enough */ }
+
+  // Drop blur overlays that sit over the redacted region (they still hold old pixels).
+  state.content.find(".blur-patch").forEach((patch) => {
+    const r = patch.getClientRect({ relativeTo: state.content });
+    const overlap =
+      r.x < region.x + region.width &&
+      r.x + r.width > region.x &&
+      r.y < region.y + region.height &&
+      r.y + r.height > region.y;
+    if (overlap) patch.destroy();
+  });
+
+  const newImg = new Image();
+  newImg.onload = () => {
+    if (state.baseImage) {
+      state.baseImage.image(newImg);
+      state.contentLayer.draw();
+    }
+    toast("Redacted — pixels removed");
+  };
+  newImg.src = src.toDataURL("image/png");
+}
+
 // Render just the base image to a plain canvas for sampling (blur / OCR / QR).
 function getBaseCanvas() {
   if (!state.baseImage?.image()) return null;
@@ -752,6 +815,20 @@ function pushUndo() {
 
 $("#btn-undo").addEventListener("click", () => {
   if (!state.content) return toast("Load an image first");
+  // Prefer restoring a redacted base bitmap when available.
+  if (state.baseHistory.length) {
+    const dataUrl = state.baseHistory.pop();
+    const img = new Image();
+    img.onload = () => {
+      if (state.baseImage) {
+        state.baseImage.image(img);
+        state.contentLayer.draw();
+        toast("Redaction undone");
+      }
+    };
+    img.src = dataUrl;
+    return;
+  }
   if (state.undoStack.length < 2) return toast("Nothing to undo");
   state.undoStack.pop(); // current
   // Simplest reliable undo: remove the most-recently added annotation.
@@ -1084,6 +1161,15 @@ $("#btn-qr-copy").addEventListener("click", () => {
   const v = $("#qr-result").textContent.replace(/^\[.*?\]\s*/, "");
   navigator.clipboard.writeText(v).then(() => toast("Value copied"));
 });
+
+// E2E / debug surface
+window.__editor = {
+  state,
+  applyRedact,
+  applyBlur,
+  flatten,
+  getBaseCanvas,
+};
 
 // ---------------------------------------------------------------------------
 boot();

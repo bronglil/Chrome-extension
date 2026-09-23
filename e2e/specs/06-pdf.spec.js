@@ -461,4 +461,56 @@ test.describe("PDF editor", () => {
     const bytes = fs.readFileSync(await download.path());
     expect(bytes.slice(0, 5).toString()).toBe("%PDF-");
   });
+
+  test("redact burns page so SECRET string is gone from exported PDF", async ({ context, extensionId }) => {
+    test.setTimeout(60_000);
+    const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const p = doc.addPage([420, 320]);
+    p.drawText("SECRET99", { x: 48, y: 220, size: 32, font, color: rgb(0, 0, 0) });
+    const pdfBytes = await doc.save();
+    const tmp = path.join(__dirname, "..", "assets", "_tmp-secret.pdf");
+    fs.writeFileSync(tmp, pdfBytes);
+
+    const page = await openPdfEditor(context, extensionId);
+    await page.setInputFiles("#pe-open", tmp);
+    await expect(page.locator("#pe-pageinfo")).toHaveText("1 / 1", { timeout: 30_000 });
+    await page.waitForFunction(() => window.__pdfEditor.state.stage);
+
+    // Cover the SECRET99 region in stage coords (fit-to-width scale varies — use a large box).
+    const size = await page.evaluate(() => window.__pdfEditor.state.pageSizes[1]);
+    await dragOnStage(page, "redact", [
+      [20, 20],
+      [Math.min(size.w - 20, 380), Math.min(size.h - 20, 280)],
+    ]);
+    expect(await overlayCount(page, ".redact")).toBe(1);
+    expect(await page.evaluate(() => window.__pdfEditor.pageHasRedact(1))).toBe(true);
+
+    const beforeText = await page.evaluate(async () => {
+      const p = await window.__pdfEditor.state.pdfDoc.getPage(1);
+      const tc = await p.getTextContent();
+      return tc.items.map((i) => i.str).join("");
+    });
+    expect(beforeText).toContain("SECRET99");
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download", { timeout: 45_000 }),
+      page.click("#pe-save"),
+    ]);
+    const out = fs.readFileSync(await download.path());
+    expect(out.slice(0, 5).toString()).toBe("%PDF-");
+
+    // Re-open exported PDF in the editor page and confirm text layer is gone.
+    const afterText = await page.evaluate(async (bytes) => {
+      const data = new Uint8Array(bytes);
+      const pdf = await window.pdfjsLib.getDocument({ data }).promise;
+      const p = await pdf.getPage(1);
+      const tc = await p.getTextContent();
+      return tc.items.map((i) => i.str).join("");
+    }, [...out]);
+    expect(afterText).not.toContain("SECRET99");
+
+    try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ }
+  });
 });
