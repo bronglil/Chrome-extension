@@ -269,4 +269,89 @@ test.describe("Popup recording prefs", () => {
     expect(manifest.commands["toggle-recording"].suggested_key.default).toBe("Ctrl+Shift+R");
     expect(manifest.commands["toggle-recording"].suggested_key.mac).toBe("Command+Shift+R");
   });
+
+  test("annotate dock: pen stroke lands on compositor; clear removes it", async ({ context, extensionId }) => {
+    test.setTimeout(45_000);
+    const rec = await openStudio(context, extensionId);
+    await goLive(rec);
+
+    await expect(rec.locator("#btn-annotate")).toBeVisible();
+    await rec.click("#btn-annotate");
+    await expect(rec.locator("#annotate-dock")).toBeVisible();
+    await expect(rec.locator("#ink-pen")).toBeVisible();
+
+    await rec.click("#ink-pen");
+    await expect(rec.locator("#ink-pen")).toHaveClass(/is-active/);
+    await expect(rec.locator("#ink-hit")).toBeVisible();
+
+    // Bright red diagonal in compositor space (720p canvas).
+    const sample = await rec.evaluate(() => {
+      const R = window.__recorder;
+      R.setInkColor("#ef4444");
+      R.setInkTool("pen");
+      R._addInkStroke({
+        tool: "pen",
+        color: "#ef4444",
+        width: 12,
+        opacity: 1,
+        points: [200, 200, 400, 200, 600, 200],
+      });
+      R._paintNow();
+      const c = R.state.canvas;
+      const ctx = c.getContext("2d");
+      // Sample mid-stroke
+      const mid = ctx.getImageData(400, 200, 1, 1).data;
+      // Sample far from stroke (waiting screen is dark)
+      const far = ctx.getImageData(50, 50, 1, 1).data;
+      return {
+        strokes: R.state.inkStrokes.length,
+        mid: [mid[0], mid[1], mid[2]],
+        far: [far[0], far[1], far[2]],
+      };
+    });
+    expect(sample.strokes).toBe(1);
+    // Red channel should dominate near the stroke
+    expect(sample.mid[0]).toBeGreaterThan(150);
+    expect(sample.mid[0]).toBeGreaterThan(sample.mid[1]);
+    expect(sample.mid[0]).toBeGreaterThan(sample.mid[2]);
+
+    await rec.click("#ink-clear");
+    const cleared = await rec.evaluate(() => {
+      const R = window.__recorder;
+      R._paintNow();
+      const mid = R.state.canvas.getContext("2d").getImageData(400, 200, 1, 1).data;
+      return {
+        strokes: R.state.inkStrokes.length,
+        mid: [mid[0], mid[1], mid[2]],
+      };
+    });
+    expect(cleared.strokes).toBe(0);
+    expect(cleared.mid[0]).toBeLessThan(80);
+
+    await rec.keyboard.press("Escape");
+    await expect(rec.locator("#annotate-dock")).toBeHidden();
+    await expect(rec.locator("#ink-hit")).toBeHidden();
+  });
+
+  test("annotate: no drawing while paused; Esc leaves draw mode", async ({ context, extensionId }) => {
+    test.setTimeout(45_000);
+    const rec = await openStudio(context, extensionId);
+    await goLive(rec);
+
+    await rec.click("#btn-annotate");
+    await rec.click("#ink-marker");
+    await expect(rec.locator("#ink-hit")).toBeVisible();
+
+    await rec.click("#btn-pause");
+    await expect(rec.locator("#paused-banner")).toBeVisible();
+    await expect(rec.locator("#ink-hit")).toBeHidden();
+
+    await rec.click("#btn-pause");
+    await expect(rec.locator("#ink-hit")).toBeVisible();
+
+    await rec.click("#ink-done");
+    await expect(rec.locator("#annotate-dock")).toBeHidden();
+    const tool = await rec.evaluate(() => window.__recorder.state.inkTool);
+    expect(tool).toBeNull();
+  });
 });

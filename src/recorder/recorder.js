@@ -63,6 +63,11 @@ const state = {
   pipScratchCtx: null,
   pipMask: null,
   pipMaskCtx: null,
+  inkTool: null, // null | pen | marker | eraser
+  inkColor: "#ef4444",
+  inkStrokes: [],
+  inkCurrent: null,
+  inkOpen: false,
 };
 
 function toast(msg, ms = 2400) {
@@ -150,6 +155,12 @@ function syncToggleUi() {
     blurBtn.classList.toggle("is-on", state.blurBg);
     blurBtn.title = state.blurBg ? "Turn off background blur" : "Blur camera background";
   }
+  const annBtn = $("#btn-annotate");
+  if (annBtn) {
+    annBtn.hidden = !state.startedAt;
+    annBtn.classList.toggle("is-on", !!state.inkOpen || !!state.inkTool);
+    annBtn.title = state.inkOpen ? "Hide draw tools" : "Draw on recording";
+  }
   const banner = $("#paused-banner");
   if (banner) banner.hidden = !state.paused;
   $("#live-chip")?.classList.toggle("is-paused", state.paused);
@@ -158,6 +169,7 @@ function syncToggleUi() {
     $("#person-panel")?.classList.toggle("is-blur", state.blurBg && !state.camOff);
   }
   syncPipUi();
+  syncInkUi();
 }
 
 function setLiveUi(live) {
@@ -169,6 +181,10 @@ function setLiveUi(live) {
   if (live) {
     $("#btn-start").hidden = true;
     $("#person-off").hidden = true;
+  } else {
+    state.inkOpen = false;
+    state.inkTool = null;
+    state.inkCurrent = null;
   }
   syncToggleUi();
 }
@@ -517,6 +533,212 @@ function drawPip(ctx, cam, W, H) {
   ctx.restore();
 }
 
+/* -------------------------------------------------------------------------- */
+/* Annotate while recording — ink in compositor (screen → ink → PiP)          */
+/* -------------------------------------------------------------------------- */
+
+function inkStyle(tool) {
+  const scale = OUT_W / 1280;
+  if (tool === "marker") {
+    return { width: Math.max(14, 22 * scale), opacity: 0.42, lineCap: "round" };
+  }
+  return { width: Math.max(2.5, 3.5 * scale), opacity: 1, lineCap: "round" };
+}
+
+function eraserRadius() {
+  return Math.max(16, 22 * (OUT_W / 1280));
+}
+
+function drawStrokePath(ctx, stroke) {
+  const pts = stroke.points;
+  if (!pts || pts.length < 2) return;
+  const style = inkStyle(stroke.tool);
+  ctx.save();
+  ctx.globalAlpha = stroke.opacity != null ? stroke.opacity : style.opacity;
+  ctx.strokeStyle = stroke.color;
+  ctx.lineWidth = stroke.width != null ? stroke.width : style.width;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(pts[0], pts[1]);
+  for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawInkLayer(ctx) {
+  for (const s of state.inkStrokes) drawStrokePath(ctx, s);
+  if (state.inkCurrent) drawStrokePath(ctx, state.inkCurrent);
+}
+
+function paintInkOverlay() {
+  const canvas = $("#ink-overlay");
+  if (!canvas) return;
+  const preview = $("#preview");
+  const rect = preview.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(1, Math.round(rect.width * dpr));
+  const h = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, w, h);
+  if (!state.inkStrokes.length && !state.inkCurrent) return;
+  ctx.save();
+  ctx.scale(w / OUT_W, h / OUT_H);
+  drawInkLayer(ctx);
+  ctx.restore();
+}
+
+function clientToInk(clientX, clientY) {
+  const preview = $("#preview");
+  const rect = preview.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return null;
+  const x = ((clientX - rect.left) / rect.width) * OUT_W;
+  const y = ((clientY - rect.top) / rect.height) * OUT_H;
+  return {
+    x: Math.max(0, Math.min(OUT_W, x)),
+    y: Math.max(0, Math.min(OUT_H, y)),
+  };
+}
+
+function strokeNearPoint(stroke, x, y, radius) {
+  const pts = stroke.points;
+  const r2 = radius * radius;
+  for (let i = 0; i < pts.length; i += 2) {
+    const dx = pts[i] - x;
+    const dy = pts[i + 1] - y;
+    if (dx * dx + dy * dy <= r2) return true;
+  }
+  return false;
+}
+
+function eraseAt(x, y) {
+  const r = eraserRadius();
+  const before = state.inkStrokes.length;
+  state.inkStrokes = state.inkStrokes.filter((s) => !strokeNearPoint(s, x, y, r));
+  return state.inkStrokes.length !== before;
+}
+
+function syncInkUi() {
+  const dock = $("#annotate-dock");
+  const hit = $("#ink-hit");
+  if (dock) dock.hidden = !state.inkOpen || !state.startedAt;
+  document.querySelectorAll(".annotate__tool").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.tool === state.inkTool);
+  });
+  document.querySelectorAll(".annotate__swatch").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.color === state.inkColor);
+  });
+  if (hit) {
+    const drawing = !!state.inkTool && !!state.startedAt && !state.paused;
+    hit.hidden = !drawing;
+    hit.classList.toggle("is-eraser", state.inkTool === "eraser");
+  }
+  paintInkOverlay();
+}
+
+function setInkTool(tool) {
+  if (!state.startedAt) return;
+  if (tool && !["pen", "marker", "eraser"].includes(tool)) return;
+  state.inkTool = tool || null;
+  state.inkOpen = true;
+  if (state.inkCurrent) {
+    if (state.inkCurrent.points.length >= 4) state.inkStrokes.push(state.inkCurrent);
+    state.inkCurrent = null;
+  }
+  syncToggleUi();
+}
+
+function setInkColor(color) {
+  if (!color) return;
+  state.inkColor = color;
+  if (state.inkTool === "eraser") state.inkTool = "pen";
+  state.inkOpen = true;
+  syncInkUi();
+}
+
+function clearInk() {
+  state.inkStrokes = [];
+  state.inkCurrent = null;
+  paintInkOverlay();
+  toast("Annotations cleared");
+}
+
+function closeInkMode() {
+  if (state.inkCurrent) {
+    if (state.inkCurrent.points.length >= 4) state.inkStrokes.push(state.inkCurrent);
+    state.inkCurrent = null;
+  }
+  state.inkTool = null;
+  state.inkOpen = false;
+  syncToggleUi();
+}
+
+function toggleAnnotateDock() {
+  if (!state.startedAt) return;
+  if (state.inkOpen) {
+    closeInkMode();
+  } else {
+    state.inkOpen = true;
+    if (!state.inkTool) state.inkTool = "pen";
+    syncToggleUi();
+  }
+}
+
+function onInkPointerDown(e) {
+  if (!state.inkTool || state.paused || !state.startedAt) return;
+  e.preventDefault();
+  const pt = clientToInk(e.clientX, e.clientY);
+  if (!pt) return;
+  const hit = $("#ink-hit");
+  hit?.setPointerCapture?.(e.pointerId);
+  if (state.inkTool === "eraser") {
+    eraseAt(pt.x, pt.y);
+    paintInkOverlay();
+    state.inkCurrent = { tool: "eraser", points: [pt.x, pt.y] };
+    return;
+  }
+  const style = inkStyle(state.inkTool);
+  state.inkCurrent = {
+    tool: state.inkTool,
+    color: state.inkColor,
+    width: style.width,
+    opacity: style.opacity,
+    points: [pt.x, pt.y],
+  };
+  paintInkOverlay();
+}
+
+function onInkPointerMove(e) {
+  if (!state.inkCurrent || state.paused) return;
+  const pt = clientToInk(e.clientX, e.clientY);
+  if (!pt) return;
+  const pts = state.inkCurrent.points;
+  const lx = pts[pts.length - 2];
+  const ly = pts[pts.length - 1];
+  if (Math.hypot(pt.x - lx, pt.y - ly) < 1.5) return;
+  if (state.inkCurrent.tool === "eraser") {
+    eraseAt(pt.x, pt.y);
+    pts.push(pt.x, pt.y);
+    paintInkOverlay();
+    return;
+  }
+  pts.push(pt.x, pt.y);
+  paintInkOverlay();
+}
+
+function onInkPointerUp() {
+  if (!state.inkCurrent) return;
+  if (state.inkCurrent.tool !== "eraser" && state.inkCurrent.points.length >= 4) {
+    state.inkStrokes.push(state.inkCurrent);
+  }
+  state.inkCurrent = null;
+  paintInkOverlay();
+}
+
 function startComposer() {
   const canvas = document.createElement("canvas");
   canvas.width = OUT_W;
@@ -539,6 +761,8 @@ function startComposer() {
     } else {
       drawWaiting(ctx, OUT_W, OUT_H);
     }
+    // Ink between screen and camera PiP so annotations stay under the presenter bubble.
+    drawInkLayer(ctx);
     if (opts.camera && state.camera && !state.camOff && camEl.readyState >= 2 && camEl.videoWidth) {
       drawPip(ctx, camEl, OUT_W, OUT_H);
     }
@@ -763,6 +987,11 @@ async function start() {
   state.micMuted = false;
   state.camOff = false;
   state.discard = false;
+  state.inkStrokes = [];
+  state.inkCurrent = null;
+  state.inkTool = null;
+  state.inkOpen = false;
+  state.inkColor = "#ef4444";
   setLiveUi(true);
   flags();
   liveStatus();
@@ -1031,10 +1260,36 @@ $("#btn-mic")?.addEventListener("click", toggleMicMute);
 $("#btn-cam")?.addEventListener("click", toggleCamera);
 $("#btn-pip-pos")?.addEventListener("click", cyclePip);
 $("#btn-blur")?.addEventListener("click", toggleBlur);
+$("#btn-annotate")?.addEventListener("click", toggleAnnotateDock);
 $("#btn-discard")?.addEventListener("click", discard);
 $("#btn-cancel-count")?.addEventListener("click", () => {
   if (state.starting && !state.recorder) stop();
 });
+
+document.querySelectorAll(".annotate__tool").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    setInkTool(btn.dataset.tool);
+  });
+});
+document.querySelectorAll(".annotate__swatch").forEach((btn) => {
+  btn.addEventListener("click", () => setInkColor(btn.dataset.color));
+});
+$("#ink-clear")?.addEventListener("click", clearInk);
+$("#ink-done")?.addEventListener("click", closeInkMode);
+
+const inkHit = $("#ink-hit");
+inkHit?.addEventListener("pointerdown", onInkPointerDown);
+inkHit?.addEventListener("pointermove", onInkPointerMove);
+inkHit?.addEventListener("pointerup", onInkPointerUp);
+inkHit?.addEventListener("pointercancel", onInkPointerUp);
+window.addEventListener("resize", () => paintInkOverlay());
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && (state.inkOpen || state.inkTool)) {
+    e.preventDefault();
+    closeInkMode();
+  }
+});
+
 window.addEventListener("beforeunload", () => {
   if (state.recorder && (state.recorder.state === "recording" || state.recorder.state === "paused")) {
     try { state.recorder.stop(); } catch (_) { /* closing */ }
@@ -1061,6 +1316,35 @@ window.__recorder = {
   cyclePip,
   toggleBlur,
   discard,
+  setInkTool,
+  setInkColor,
+  clearInk,
+  closeInkMode,
+  toggleAnnotateDock,
+  /** Inject a stroke in compositor space (e2e). */
+  _addInkStroke(stroke) {
+    state.inkStrokes.push(stroke);
+    paintInkOverlay();
+  },
+  /** Force one compositor tick (e2e). */
+  _paintNow() {
+    if (!state.ctx || !state.canvas) return null;
+    const screenEl = $("#screen-preview");
+    const camEl = $("#cam-preview");
+    const ctx = state.ctx;
+    if (state.sharing && screenEl.videoWidth > 2) {
+      ctx.fillStyle = "#0b0d12";
+      ctx.fillRect(0, 0, OUT_W, OUT_H);
+      drawContain(ctx, screenEl, OUT_W, OUT_H);
+    } else {
+      drawWaiting(ctx, OUT_W, OUT_H);
+    }
+    drawInkLayer(ctx);
+    if (opts.camera && state.camera && !state.camOff && camEl.readyState >= 2 && camEl.videoWidth) {
+      drawPip(ctx, camEl, OUT_W, OUT_H);
+    }
+    return { w: state.canvas.width, h: state.canvas.height };
+  },
   /** @internal e2e helpers */
   _sync() {
     syncToggleUi();
