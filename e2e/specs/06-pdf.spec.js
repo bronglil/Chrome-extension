@@ -370,4 +370,95 @@ test.describe("PDF editor", () => {
     expect(bytes.slice(0, 5).toString()).toBe("%PDF-");
     expect(bytes.length).toBeGreaterThan(fs.statSync(SAMPLE).size);
   });
+
+  test("rotates the current page 90° and swaps stage dimensions", async ({ context, extensionId }) => {
+    test.setTimeout(60_000);
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+
+    const before = await page.evaluate(() => {
+      const s = window.__pdfEditor.state;
+      return {
+        w: s.stage.width(),
+        h: s.stage.height(),
+        rot: window.__pdfEditor.userRotation(s.pageNum),
+      };
+    });
+    expect(before.rot).toBe(0);
+
+    await page.click("#pe-rotate-cw");
+    await expect(page.locator("#pe-rotate-label")).toHaveText(/90°/, { timeout: 15_000 });
+
+    const after = await page.evaluate(() => {
+      const s = window.__pdfEditor.state;
+      return {
+        w: s.stage.width(),
+        h: s.stage.height(),
+        rot: window.__pdfEditor.userRotation(s.pageNum),
+        size: s.pageSizes[s.pageNum],
+      };
+    });
+    expect(after.rot).toBe(90);
+    // Fit-to-width means sizes aren't a pure swap — aspect must invert.
+    expect(before.w / before.h).toBeLessThan(1.05); // sample page is portrait-ish
+    expect(after.w / after.h).toBeGreaterThan(1);
+    expect(after.size.rotation % 360).toBe(90);
+
+    await page.click("#pe-rotate-cw");
+    await expect(page.locator("#pe-rotate-label")).toHaveText(/180°/);
+    await page.click("#pe-rotate-ccw");
+    await expect(page.locator("#pe-rotate-label")).toHaveText(/90°/);
+    await page.click("#pe-rotate-ccw");
+    await expect(page.locator("#pe-rotate-label")).toHaveText(/0°/);
+  });
+
+  test("All pages scope rotates every page together", async ({ context, extensionId }) => {
+    test.setTimeout(60_000);
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+
+    await page.click('#pe-rotate-scope [data-rotate-scope="all"]');
+    await expect(page.locator('#pe-rotate-scope [data-rotate-scope="all"]')).toHaveClass(/is-active/);
+
+    await page.click("#pe-rotate-cw");
+    await expect(page.locator("#pe-rotate-label")).toHaveText(/90°.*all pages/i, { timeout: 15_000 });
+
+    const rots = await page.evaluate(() => {
+      const n = window.__pdfEditor.state.numPages;
+      return Array.from({ length: n }, (_, i) => window.__pdfEditor.userRotation(i + 1));
+    });
+    expect(rots).toEqual([90, 90]);
+
+    // Page 2 slot should also be landscape now.
+    const sizes = await page.evaluate(() => {
+      const s = window.__pdfEditor.state.pageSizes;
+      return { p1: s[1], p2: s[2] };
+    });
+    expect(sizes.p1.w).toBeGreaterThan(sizes.p1.h);
+    expect(sizes.p2.w).toBeGreaterThan(sizes.p2.h);
+  });
+
+  test("rotate clears annotations on that page then export still works", async ({ context, extensionId }) => {
+    test.setTimeout(60_000);
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+    await page.click('#pe-rotate-scope [data-rotate-scope="page"]');
+    await dragOnStage(page, "pen", [
+      [80, 100],
+      [200, 120],
+    ]);
+    expect(await overlayCount(page, ".pen")).toBe(1);
+
+    await page.click("#pe-rotate-cw");
+    await expect(page.locator("#pe-rotate-label")).toHaveText(/90°/, { timeout: 15_000 });
+    await expect.poll(() => overlayCount(page, ".pen")).toBe(0);
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download", { timeout: 30_000 }),
+      page.click("#pe-save"),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/\.pdf$/);
+    const bytes = fs.readFileSync(await download.path());
+    expect(bytes.slice(0, 5).toString()).toBe("%PDF-");
+  });
 });

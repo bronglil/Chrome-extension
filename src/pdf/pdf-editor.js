@@ -19,14 +19,28 @@ const DEVICE = U.deviceProfile();
 
 // Fit the page to the editor width, then rasterize at device pixel ratio so
 // type stays sharp on retina without blowing memory on low-power machines.
-function pageDisplayScale(page) {
+function pageDisplayScale(page, rotation) {
   const wrap = $("#pe-stage-wrap");
   const avail = Math.max(360, (wrap?.clientWidth || 720) - 56);
-  const base = page.getViewport({ scale: 1 });
+  const base = page.getViewport({
+    scale: 1,
+    rotation: rotation == null ? page.rotate || 0 : rotation,
+  });
   return avail / base.width;
 }
 function rasterDpr() {
   return Math.min(DEVICE.maxPixelRatio || 2, window.devicePixelRatio || 1, 2.5);
+}
+
+/** Absolute page rotation for pdf.js (built-in rotate + user turns). */
+function totalRotation(page, num) {
+  const base = page?.rotate || 0;
+  const extra = state.pageRotations[num] || 0;
+  return (base + extra + 360) % 360;
+}
+
+function userRotation(num) {
+  return (state.pageRotations[num] || 0) % 360;
 }
 
 const state = {
@@ -44,6 +58,7 @@ const state = {
   // Per-page overlay JSON + the pixel viewport used when rendered.
   pageOverlays: {},    // { [pageNum]: konvaJSON }
   pageSizes: {},       // { [pageNum]: {w,h} } in rendered pixels
+  pageRotations: {},   // { [pageNum]: 0|90|180|270 } user turns on top of PDF /Rotate
   acknowledge: false,  // stamp "AK" at the bottom of every page
   ackLayer: null,      // on-screen AK badge (redrawn per page; not serialized)
   pageCanvas: null,    // the rendered pixels of the current page (for occupancy checks)
@@ -118,11 +133,14 @@ async function openPdf(arrayBuffer, name) {
   state.pageNum = 1;
   state.pageOverlays = {};
   state.pageSizes = {};
+  state.pageRotations = {};
   const chip = $("#pe-file");
   chip.textContent = state.fileName;
   chip.hidden = false;
   $("#pe-empty").hidden = true;
   $("#pe-save").disabled = false;
+  $("#pe-rotate-cw").disabled = false;
+  $("#pe-rotate-ccw").disabled = false;
   await renderAllPages();
   updatePager();
 }
@@ -161,10 +179,10 @@ function clearViews() {
   if (host) host.innerHTML = "";
 }
 
-function unmountPage(num) {
+function unmountPage(num, { skipSave = false } = {}) {
   const view = state.views[num];
   if (!view) return;
-  saveOverlay(num);
+  if (!skipSave) saveOverlay(num);
   try { view.stage.destroy(); } catch (_) { /* already gone */ }
   if (view.pageCanvas) {
     view.pageCanvas.width = 0;
@@ -203,8 +221,9 @@ function activatePage(num, { scroll = false } = {}) {
 async function mountPage(num, container) {
   const page = await state.pdfDoc.getPage(num);
   const dpr = rasterDpr();
-  const fit = pageDisplayScale(page);
-  const viewport = page.getViewport({ scale: fit * dpr });
+  const rotation = totalRotation(page, num);
+  const fit = pageDisplayScale(page, rotation);
+  const viewport = page.getViewport({ scale: fit * dpr, rotation });
   const displayW = Math.max(1, Math.round(viewport.width / dpr));
   const displayH = Math.max(1, Math.round(viewport.height / dpr));
 
@@ -220,7 +239,7 @@ async function mountPage(num, container) {
   if (prev && prev.w && Math.abs(prev.w - displayW) > 2) {
     scaleSavedOverlay(num, displayW / prev.w);
   }
-  state.pageSizes[num] = { w: displayW, h: displayH, dpr };
+  state.pageSizes[num] = { w: displayW, h: displayH, dpr, rotation };
 
   Konva.pixelRatio = dpr;
   const stage = new Konva.Stage({ container, width: displayW, height: displayH });
@@ -260,15 +279,16 @@ async function renderAllPages() {
   const dpr = rasterDpr();
   for (let n = 1; n <= state.numPages; n++) {
     const page = await state.pdfDoc.getPage(n);
-    const fit = pageDisplayScale(page);
-    const vp = page.getViewport({ scale: fit });
+    const rotation = totalRotation(page, n);
+    const fit = pageDisplayScale(page, rotation);
+    const vp = page.getViewport({ scale: fit, rotation });
     const displayW = Math.max(1, Math.round(vp.width));
     const displayH = Math.max(1, Math.round(vp.height));
     const prev = state.pageSizes[n];
     if (prev && prev.w && Math.abs(prev.w - displayW) > 2) {
       scaleSavedOverlay(n, displayW / prev.w);
     }
-    state.pageSizes[n] = { w: displayW, h: displayH, dpr };
+    state.pageSizes[n] = { w: displayW, h: displayH, dpr, rotation };
 
     const card = document.createElement("section");
     card.className = "pe-page";
@@ -415,7 +435,132 @@ function reviveImages(node, layer) {
 function updatePager() {
   const info = $("#pe-pageinfo");
   if (info) info.textContent = state.numPages ? `${state.pageNum} / ${state.numPages}` : "— / —";
+  syncRotateUi();
 }
+
+function syncRotateUi() {
+  const has = !!state.pdfDoc;
+  const cw = $("#pe-rotate-cw");
+  const ccw = $("#pe-rotate-ccw");
+  const label = $("#pe-rotate-label");
+  if (cw) cw.disabled = !has;
+  if (ccw) ccw.disabled = !has;
+  if (label) {
+    const scope = rotateScope();
+    if (!has) {
+      label.textContent = "Rotation: 0°";
+    } else if (scope === "all") {
+      const deg = userRotation(1);
+      const same = Array.from({ length: state.numPages }, (_, i) => userRotation(i + 1))
+        .every((d) => d === deg);
+      label.textContent = same
+        ? `Rotation: ${deg}° · all pages`
+        : `Mixed rotations · all pages`;
+    } else {
+      const deg = userRotation(state.pageNum);
+      label.textContent = deg ? `Rotation: ${deg}° · this page` : "Rotation: 0° · this page";
+    }
+  }
+}
+
+function rotateScope() {
+  const active = document.querySelector("#pe-rotate-scope .seg__btn.is-active");
+  return active?.dataset.rotateScope === "all" ? "all" : "page";
+}
+
+function clearPageAnnotations(num) {
+  delete state.pageOverlays[num];
+  const view = state.views[num];
+  if (!view?.overlayLayer) return;
+  try {
+    const layer = view.overlayLayer;
+    const tf = view.transformer;
+    if (tf) tf.nodes([]);
+    layer.getChildren().slice().forEach((n) => {
+      if (n === tf || n.className === "Transformer") return;
+      try { n.destroy(); } catch (_) { /* ignore */ }
+    });
+    layer.draw();
+  } catch (_) { /* ignore */ }
+}
+
+async function relayoutPageSlot(num) {
+  const page = await state.pdfDoc.getPage(num);
+  const rotation = totalRotation(page, num);
+  const fit = pageDisplayScale(page, rotation);
+  const vp = page.getViewport({ scale: fit, rotation });
+  const displayW = Math.max(1, Math.round(vp.width));
+  const displayH = Math.max(1, Math.round(vp.height));
+  const dpr = rasterDpr();
+  state.pageSizes[num] = { w: displayW, h: displayH, dpr, rotation };
+
+  const slot = state.slots[num];
+  if (slot) {
+    slot.w = displayW;
+    slot.h = displayH;
+    if (slot.stageEl) {
+      slot.stageEl.style.width = displayW + "px";
+      slot.stageEl.style.height = displayH + "px";
+    }
+  }
+
+  if (state.views[num]) {
+    unmountPage(num, { skipSave: true });
+  }
+}
+
+/**
+ * Rotate by ±90°. Scope is "This page" or "All pages" from the inspector toggle.
+ * Annotations on affected pages are cleared (coordinate space changes).
+ */
+async function rotatePage(delta) {
+  if (!state.pdfDoc || !state.pageNum) {
+    toast("Open a PDF first");
+    return;
+  }
+  const scope = rotateScope();
+  const targets = scope === "all"
+    ? Array.from({ length: state.numPages }, (_, i) => i + 1)
+    : [state.pageNum];
+
+  for (const num of targets) {
+    const next = (userRotation(num) + delta + 360) % 360;
+    state.pageRotations[num] = next;
+    clearPageAnnotations(num);
+    await relayoutPageSlot(num);
+  }
+
+  // Remount pages that should be live (current + neighbors).
+  await syncLivePages();
+  if (!state.views[state.pageNum]) await ensureMounted(state.pageNum);
+  activatePage(state.pageNum);
+  syncRotateUi();
+
+  if (scope === "all") {
+    const deg = userRotation(1);
+    toast(deg ? `All ${targets.length} pages → ${deg}°` : "All pages upright");
+  } else {
+    const deg = userRotation(state.pageNum);
+    toast(deg ? `Page ${state.pageNum} → ${deg}°` : `Page ${state.pageNum} upright`);
+  }
+}
+
+document.querySelectorAll("#pe-rotate-scope .seg__btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#pe-rotate-scope .seg__btn").forEach((b) => {
+      b.classList.toggle("is-active", b === btn);
+      b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+    });
+    syncRotateUi();
+  });
+});
+
+$("#pe-rotate-cw")?.addEventListener("click", () => {
+  rotatePage(90).catch((err) => toast(err.message || "Rotate failed"));
+});
+$("#pe-rotate-ccw")?.addEventListener("click", () => {
+  rotatePage(-90).catch((err) => toast(err.message || "Rotate failed"));
+});
 
 function pagesToKeepLive() {
   const want = new Set();
@@ -1010,10 +1155,13 @@ function openSigModal() {
 function closeSigModal() { $("#pe-sig-modal").hidden = true; }
 $("#pe-sig-cancel").addEventListener("click", closeSigModal);
 
-document.querySelectorAll(".seg__btn").forEach((t) =>
+document.querySelectorAll("#pe-sig-modal .seg__btn").forEach((t) =>
   t.addEventListener("click", () => setSigTab(t.dataset.sig)));
 function setSigTab(name) {
-  document.querySelectorAll(".seg__btn").forEach((t) => t.classList.toggle("is-active", t.dataset.sig === name));
+  if (!name) return;
+  document.querySelectorAll("#pe-sig-modal .seg__btn").forEach((t) => {
+    t.classList.toggle("is-active", t.dataset.sig === name);
+  });
   document.querySelectorAll(".sig-pane").forEach((p) => (p.hidden = p.dataset.pane !== name));
 }
 
@@ -1052,7 +1200,7 @@ $("#pe-sig-file").addEventListener("change", async (e) => {
 
 // Produce the signature image for the active tab.
 async function buildSignature() {
-  const active = document.querySelector(".seg__btn.is-active").dataset.sig;
+  const active = document.querySelector("#pe-sig-modal .seg__btn.is-active")?.dataset.sig;
   if (active === "draw") {
     if (!padHasInk) return null;
     return pad.toDataURL("image/png");
@@ -1114,18 +1262,60 @@ async function exportPdf() {
     progress("Preparing…", 0.1);
     saveAllOverlays();
 
-    const { PDFDocument } = PDFLib;
+    const { PDFDocument, degrees } = PDFLib;
     const pdf = await PDFDocument.load(state.pdfBytes);
     const pages = pdf.getPages();
+
+    // Apply user page rotations. Pages that also have ink are handled below via
+    // a visual flatten (rotation baked into the bitmap) so strokes stay aligned.
+    for (let i = 0; i < pages.length; i++) {
+      const num = i + 1;
+      const extra = userRotation(num);
+      if (!extra) continue;
+      const hasInk = (() => {
+        try {
+          const raw = state.pageOverlays[num];
+          if (!raw) return false;
+          const parsed = JSON.parse(raw);
+          return !!(parsed.children && parsed.children.length);
+        } catch (_) { return false; }
+      })();
+      if (hasInk) continue; // flattened path applies orientation
+      const page = pages[i];
+      const cur = page.getRotation().angle;
+      page.setRotation(degrees((cur + extra) % 360));
+    }
 
     const annotated = Object.keys(state.pageOverlays);
     for (let i = 0; i < annotated.length; i++) {
       const num = +annotated[i];
       progress("Embedding page " + num + "…", 0.1 + 0.8 * (i / annotated.length));
+      const extra = userRotation(num);
+      const page = pages[num - 1];
+
+      if (extra) {
+        // Bake rotated page + overlays into one image; reset /Rotate so the
+        // viewer does not spin the bitmap again.
+        const flat = await flattenPageVisual(num);
+        if (!flat) continue;
+        const png = await pdf.embedPng(flat);
+        const vis = state.pageSizes[num] || { w: png.width, h: png.height };
+        const { width, height } = page.getSize();
+        page.setRotation(degrees(0));
+        const visualLandscape = vis.w >= vis.h;
+        const boxLandscape = width >= height;
+        if (visualLandscape !== boxLandscape) {
+          page.setSize(height, width);
+          page.drawImage(png, { x: 0, y: 0, width: height, height: width });
+        } else {
+          page.drawImage(png, { x: 0, y: 0, width, height });
+        }
+        continue;
+      }
+
       const pngDataUrl = await overlayPng(num);
       if (!pngDataUrl) continue;
       const png = await pdf.embedPng(pngDataUrl);
-      const page = pages[num - 1];
       const { width, height } = page.getSize();
       page.drawImage(png, { x: 0, y: 0, width, height });
     }
@@ -1211,8 +1401,38 @@ async function overlayPng(num) {
   return dataUrl;
 }
 
+/** Full visual page (rotated PDF raster + overlays) for export after rotate. */
+async function flattenPageVisual(num) {
+  const page = await state.pdfDoc.getPage(num);
+  const dpr = Math.max(2, rasterDpr());
+  const rotation = totalRotation(page, num);
+  const fit = pageDisplayScale(page, rotation);
+  const viewport = page.getViewport({ scale: fit * dpr, rotation });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  const ctx = canvas.getContext("2d", { alpha: false });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport, intent: "display" }).promise;
+
+  const overlayUrl = await overlayPng(num);
+  if (overlayUrl) {
+    await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => {
+        ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
+        resolve();
+      };
+      im.onerror = reject;
+      im.src = overlayUrl;
+    });
+  }
+  return canvas.toDataURL("image/png");
+}
+
 // Expose a couple of internals for E2E tests.
 window.__pdfEditor = {
   state, openPdf, exportPdf, chooseAckSide, editText, addTextAt, goToPage,
-  pointer, clientFromStage,
+  pointer, clientFromStage, rotatePage, userRotation, totalRotation, rotateScope,
 };
