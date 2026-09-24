@@ -1365,12 +1365,16 @@ function closeTrimPanel() {
 }
 
 /**
- * Trim by local re-encode: play the source WebM from start→end while
- * MediaRecorder captures `HTMLMediaElement.captureStream()`. No ffmpeg,
- * fully offline. Documented approach for #42.
+ * Trim by local re-encode: play the source WebM and MediaRecorder-capture
+ * only the [start, end] window via `HTMLMediaElement.captureStream()`.
+ * No ffmpeg, fully offline. Documented approach for #42.
  *
- * Video is muted so Chrome's autoplay policy allows play() after async seek
- * (critical under CI / Xvfb where there is no sticky user-gesture).
+ * Strategy (CI-safe):
+ *  - Mute + attach offscreen so autoplay works under Xvfb.
+ *  - Play from 0 and start MediaRecorder only once currentTime reaches
+ *    `start` (MediaRecorder WebMs often seek poorly before first play).
+ *  - Stop on currentTime/`ended` OR wall-clock (end-start), whichever first —
+ *    never rely on a generous +2s pad that can leave a near-full clip.
  */
 function trimWebmBlob(blob, startSec, endSec) {
   return new Promise(async (resolve, reject) => {
@@ -1386,7 +1390,9 @@ function trimWebmBlob(blob, startSec, endSec) {
     const src = URL.createObjectURL(blob);
     video.src = src;
 
+    let rec = null;
     const cleanup = () => {
+      try { if (rec && rec.state !== "inactive") rec.stop(); } catch (_) { /* ignore */ }
       try { URL.revokeObjectURL(src); } catch (_) { /* ignore */ }
       try {
         video.pause();
@@ -1394,6 +1400,11 @@ function trimWebmBlob(blob, startSec, endSec) {
         video.load();
         video.remove();
       } catch (_) { /* ignore */ }
+    };
+
+    const stopRec = () => {
+      try { video.pause(); } catch (_) { /* ignore */ }
+      try { if (rec && rec.state !== "inactive") rec.stop(); } catch (_) { /* ignore */ }
     };
 
     try {
@@ -1404,32 +1415,11 @@ function trimWebmBlob(blob, startSec, endSec) {
       await fixWebmDuration(video);
       let dur = video.duration || 0;
       if (!Number.isFinite(dur) || dur <= 0) {
-        // Last resort: use caller end as duration bound.
         dur = Math.max(endSec, startSec + 0.5, 1);
       }
       const start = Math.max(0, Math.min(startSec, Math.max(0, dur - 0.25)));
       const end = Math.min(dur, Math.max(start + 0.25, endSec));
-
-      await new Promise((res, rej) => {
-        const t = setTimeout(() => rej(new Error("Seek timed out")), 4000);
-        const onSeeked = () => {
-          clearTimeout(t);
-          video.removeEventListener("seeked", onSeeked);
-          res();
-        };
-        video.addEventListener("seeked", onSeeked);
-        try {
-          video.currentTime = start;
-        } catch (err) {
-          clearTimeout(t);
-          rej(err);
-        }
-      });
-      // Confirm we actually landed near the trim start.
-      if (Math.abs(video.currentTime - start) > 0.5) {
-        video.currentTime = start;
-        await new Promise((r) => setTimeout(r, 120));
-      }
+      const windowSec = end - start;
 
       if (typeof video.captureStream !== "function") {
         cleanup();
@@ -1442,7 +1432,6 @@ function trimWebmBlob(blob, startSec, endSec) {
         return reject(new Error("Trim capture stream has no video track"));
       }
       const mime = pickMime(!!stream.getAudioTracks().length);
-      let rec;
       try {
         rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateFor(OUT_W, OUT_H) });
       } catch (_) {
@@ -1455,38 +1444,69 @@ function trimWebmBlob(blob, startSec, endSec) {
         rec.onerror = () => res(new Blob(chunks, { type: "video/webm" }));
       });
 
-      rec.start(100);
+      try {
+        video.currentTime = 0;
+      } catch (_) { /* ignore */ }
+
       try {
         await video.play();
       } catch (err) {
-        try { if (rec.state !== "inactive") rec.stop(); } catch (_) { /* ignore */ }
         cleanup();
         return reject(new Error("Trim playback failed: " + (err.message || err)));
       }
 
-      await new Promise((res) => {
+      // Wait until playback reaches the trim start (or bail).
+      await new Promise((res, rej) => {
+        const t0 = performance.now();
+        const maxMs = Math.max(4000, (start + 3) * 1000);
         const tick = () => {
-          if (video.ended || video.currentTime >= end - 0.02) {
-            try { video.pause(); } catch (_) { /* ignore */ }
-            try { if (rec.state !== "inactive") rec.stop(); } catch (_) { /* ignore */ }
+          if (video.currentTime >= start - 0.04 || (start <= 0.05 && video.currentTime >= 0)) {
             res();
+            return;
+          }
+          if (video.ended) {
+            rej(new Error("Playback ended before trim start"));
+            return;
+          }
+          if (performance.now() - t0 > maxMs) {
+            rej(new Error("Timed out waiting for trim start"));
             return;
           }
           requestAnimationFrame(tick);
         };
         tick();
-        // Hard stop so a stuck play cannot hang forever.
-        setTimeout(() => {
-          try { video.pause(); } catch (_) { /* ignore */ }
-          try { if (rec.state !== "inactive") rec.stop(); } catch (_) { /* ignore */ }
+      });
+
+      rec.start(100);
+      const recStarted = performance.now();
+
+      await new Promise((res) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          stopRec();
           res();
-        }, Math.ceil((end - start + 2) * 1000));
+        };
+        const tick = () => {
+          if (settled) return;
+          const elapsed = (performance.now() - recStarted) / 1000;
+          if (video.ended || video.currentTime >= end - 0.02 || elapsed >= windowSec + 0.15) {
+            finish();
+            return;
+          }
+          requestAnimationFrame(tick);
+        };
+        tick();
+        // Hard ceiling slightly above the requested window — not +2s (that
+        // made CI clips nearly as long as the original).
+        setTimeout(finish, Math.ceil((windowSec + 0.6) * 1000));
       });
 
       const out = await stopped;
       cleanup();
       if (!out.size) return reject(new Error("Trim produced an empty file"));
-      resolve({ blob: out, duration: end - start });
+      resolve({ blob: out, duration: windowSec });
     } catch (err) {
       cleanup();
       reject(err);

@@ -502,8 +502,11 @@ test.describe("Popup recording prefs", () => {
       return d;
     }, [...buf]);
 
+    const want = range.end - range.start;
     expect(trimmedDur).toBeGreaterThan(0.3);
-    // Re-encode can pad a little; still must be clearly shorter than the original.
-    expect(trimmedDur).toBeLessThan(fullDur * 0.75);
+    // Wall-clock re-encode should track the selected window (± slack for
+    // MediaRecorder keyframe / WebM duration quirks), and stay well under full.
+    expect(trimmedDur).toBeLessThan(want * 1.6 + 0.4);
+    expect(trimmedDur).toBeLessThan(fullDur * 0.7);
   });
 });
