@@ -20,7 +20,7 @@
     <section class="grp">
       <h2 class="grp__title">This tab</h2>
       <p class="grp__lead">Screenshot the page you are looking at</p>
-      <div class="tiles tiles--3">
+      <div class="tiles tiles--2">
         <button class="tile" data-action="capture-visible" title="Grab the visible part of the tab">
           <span class="tile__ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 4"/></svg></span>
           <span>Visible</span>
@@ -32,6 +32,10 @@
         <button class="tile" data-action="capture-full-page" title="Scroll &amp; stitch the whole page">
           <span class="tile__ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M9 7h6M9 11h6M9 15h4"/></svg></span>
           <span>Full page</span>
+        </button>
+        <button class="tile" data-action="capture-element" title="Pick a scrollable panel and stitch its full content">
+          <span class="tile__ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="10" height="16" rx="1.5"/><path d="M15 8h6M15 12h6M15 16h4"/><path d="M7 8v8"/></svg></span>
+          <span>Element</span>
         </button>
       </div>
       <button class="wide" data-action="ocr-area" title="Drag a box, then copy the text inside it">

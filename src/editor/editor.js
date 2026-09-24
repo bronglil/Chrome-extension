@@ -103,6 +103,7 @@ const KIND_LABEL = {
   visible: "Visible tab",
   area: "Area",
   fullpage: "Full page",
+  element: "Element",
   "desktop-screen": "Full screen",
   "desktop-window": "Window",
 };

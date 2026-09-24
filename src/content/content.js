@@ -10,7 +10,7 @@
 // ============================================================================
 
 (() => {
-  const CONTENT_API = 4;
+  const CONTENT_API = 5;
   if (window.__snapshotStudioApi >= CONTENT_API) return;
   window.__snapshotStudioApi = CONTENT_API;
   window.__snapshotStudioInjected = true;
@@ -41,6 +41,11 @@
         return false;
       case "START_FULL_PAGE":
         captureFullPage().then(sendResponse).catch((e) =>
+          sendResponse({ error: e.message || String(e) })
+        );
+        return true;
+      case "START_ELEMENT_CAPTURE":
+        captureElementFlow(msg).then(sendResponse).catch((e) =>
           sendResponse({ error: e.message || String(e) })
         );
         return true;
@@ -367,7 +372,7 @@
     const els = document.querySelectorAll("*");
     for (const el of els) {
       const cs = getComputedStyle(el);
-      if (el.closest && el.closest(".snapshot-progress, .snapshot-overlay, .snapshot-copybar, .snapshot-error, .snapshot-hint, .snapshot-selection, .snapshot-dims")) continue;
+      if (el.closest && el.closest(".snapshot-progress, .snapshot-overlay, .snapshot-copybar, .snapshot-error, .snapshot-hint, .snapshot-selection, .snapshot-dims, .snapshot-el-highlight")) continue;
       if ((cs.position === "fixed" || cs.position === "sticky") &&
           cs.display !== "none" && el.offsetHeight > 0) {
         hidden.push([el, el.style.visibility]);
@@ -376,13 +381,16 @@
     return hidden;
   }
 
-  function progressHud() {
+  function progressHud(title) {
     let el = document.querySelector(".snapshot-progress");
-    if (el) return el;
+    if (el) {
+      if (title) el.querySelector(".snapshot-progress__title").textContent = title;
+      return el;
+    }
     el = document.createElement("div");
     el.className = "snapshot-progress";
     el.innerHTML =
-      '<div class="snapshot-progress__title">Capturing full page</div>' +
+      '<div class="snapshot-progress__title">' + (title || "Capturing full page") + "</div>" +
       '<div class="snapshot-progress__count"></div>' +
       '<div class="snapshot-progress__dots"></div>';
     document.documentElement.appendChild(el);
@@ -394,8 +402,8 @@
     if (el) el.style.visibility = "hidden";
   }
 
-  function showProgressHud(done, total) {
-    const el = progressHud();
+  function showProgressHud(done, total, title) {
+    const el = progressHud(title);
     el.style.visibility = "visible";
     const left = Math.max(0, total - done);
     el.querySelector(".snapshot-progress__count").textContent =
@@ -435,14 +443,14 @@
       const cappedCss = Math.min(m.totalHeight, Math.floor(MAX_CANVAS / m.dpr));
       const total = Math.max(1, Math.ceil(cappedCss / Math.max(1, m.viewH)));
       let taken = 0;
-      showProgressHud(0, total);
+      showProgressHud(0, total, "Capturing full page");
 
       const takeSlice = async () => {
         hideProgressHud();
         await sleep(40);
         const res = await requestSlice();
         taken += 1;
-        showProgressHud(taken, total);
+        showProgressHud(taken, total, "Capturing full page");
         return res;
       };
 
@@ -499,6 +507,220 @@
       html.style.scrollBehavior = prevBehavior;
       window.scrollTo(originalScrollX, originalScrollY);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Element / scrollable-container capture (#14)
+  // -------------------------------------------------------------------------
+  function isScrollable(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el === document.documentElement || el === document.body) return false;
+    const cs = getComputedStyle(el);
+    const oy = cs.overflowY;
+    if (!(oy === "auto" || oy === "scroll" || oy === "overlay")) return false;
+    return el.scrollHeight > el.clientHeight + 8;
+  }
+
+  function findScrollableAt(x, y) {
+    const stack = document.elementsFromPoint(x, y) || [];
+    for (const el of stack) {
+      if (!(el instanceof Element)) continue;
+      if (el.closest?.(".snapshot-progress, .snapshot-overlay, .snapshot-hint, .snapshot-el-highlight, .snapshot-copybar")) {
+        continue;
+      }
+      let cur = el;
+      while (cur && cur !== document.documentElement) {
+        if (isScrollable(cur)) return cur;
+        cur = cur.parentElement;
+      }
+    }
+    return null;
+  }
+
+  function pickScrollableElement() {
+    return new Promise((resolve) => {
+      const highlight = document.createElement("div");
+      highlight.className = "snapshot-el-highlight";
+      const hint = document.createElement("div");
+      hint.className = "snapshot-hint";
+      hint.textContent = "Click a scrollable area · Esc to cancel";
+      document.documentElement.appendChild(highlight);
+      document.documentElement.appendChild(hint);
+
+      let current = null;
+      const cleanup = () => {
+        document.removeEventListener("mousemove", onMove, true);
+        document.removeEventListener("click", onClick, true);
+        document.removeEventListener("keydown", onKey, true);
+        highlight.remove();
+        hint.remove();
+      };
+      const onMove = (e) => {
+        const el = findScrollableAt(e.clientX, e.clientY);
+        current = el;
+        if (!el) {
+          highlight.style.display = "none";
+          return;
+        }
+        const r = el.getBoundingClientRect();
+        highlight.style.display = "block";
+        highlight.style.left = r.left + "px";
+        highlight.style.top = r.top + "px";
+        highlight.style.width = r.width + "px";
+        highlight.style.height = r.height + "px";
+      };
+      const onClick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!current) return;
+        const el = current;
+        cleanup();
+        resolve(el);
+      };
+      const onKey = (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cleanup();
+          resolve(null);
+        }
+      };
+      document.addEventListener("mousemove", onMove, true);
+      document.addEventListener("click", onClick, true);
+      document.addEventListener("keydown", onKey, true);
+    });
+  }
+
+  function collectFixedIn(root) {
+    const hidden = [];
+    const els = root.querySelectorAll("*");
+    for (const el of els) {
+      const cs = getComputedStyle(el);
+      if ((cs.position === "fixed" || cs.position === "sticky") &&
+          cs.display !== "none" && el.offsetHeight > 0) {
+        hidden.push([el, el.style.visibility]);
+      }
+    }
+    return hidden;
+  }
+
+  function cropFromViewport(img, rectCss, dpr) {
+    const sx = Math.max(0, Math.round(rectCss.left * dpr));
+    const sy = Math.max(0, Math.round(rectCss.top * dpr));
+    const sw = Math.max(1, Math.round(rectCss.width * dpr));
+    const sh = Math.max(1, Math.round(rectCss.height * dpr));
+    const c = document.createElement("canvas");
+    c.width = sw;
+    c.height = sh;
+    const ctx = c.getContext("2d", { alpha: false });
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+    return c;
+  }
+
+  async function stitchElement(el) {
+    const winScrollY = window.scrollY;
+    const winScrollX = window.scrollX;
+    const prevScrollTop = el.scrollTop;
+    const prevScrollLeft = el.scrollLeft;
+    let fixedHidden = [];
+
+    try {
+      el.scrollTop = 0;
+      el.scrollLeft = 0;
+      await sleep(profile.settleMs);
+
+      const dpr = window.devicePixelRatio || 1;
+      const viewH = el.clientHeight;
+      const totalH = el.scrollHeight;
+      if (viewH < 8 || totalH <= viewH + 8) {
+        throw new Error("That area is not scrollable enough to capture.");
+      }
+      const cappedCss = Math.min(totalH, Math.floor(MAX_CANVAS / dpr));
+      const total = Math.max(1, Math.ceil(cappedCss / Math.max(1, viewH)));
+      let taken = 0;
+      showProgressHud(0, total, "Capturing element");
+
+      const takeCropped = async () => {
+        hideProgressHud();
+        await sleep(40);
+        const res = await requestSlice();
+        taken += 1;
+        showProgressHud(taken, total, "Capturing element");
+        if (res?.error) throw new Error(res.error);
+        const full = await loadImage(res.dataUrl);
+        const rect = el.getBoundingClientRect();
+        return cropFromViewport(full, rect, dpr);
+      };
+
+      const first = await takeCropped();
+      const scaleY = first.height / Math.max(1, viewH);
+      const canvas = document.createElement("canvas");
+      canvas.width = first.width;
+      canvas.height = Math.min(Math.round(cappedCss * scaleY), MAX_CANVAS);
+      const ctx = canvas.getContext("2d", { alpha: false });
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(first, 0, 0);
+
+      let y = viewH;
+      while (y < cappedCss - 1) {
+        el.scrollTop = y;
+        await sleep(profile.sliceDelayMs);
+        const actualY = el.scrollTop;
+
+        if (!fixedHidden.length && actualY > 0) {
+          fixedHidden = collectFixedIn(el);
+          fixedHidden.forEach(([node]) => (node.style.visibility = "hidden"));
+          await sleep(60);
+        }
+
+        const tile = await takeCropped();
+        const destY = Math.round(actualY * scaleY);
+        const remaining = canvas.height - destY;
+        if (remaining <= 2) break;
+
+        const atEnd = actualY + viewH >= cappedCss - 1;
+        const srcY = atEnd ? Math.max(0, tile.height - remaining) : 0;
+        const drawH = Math.min(tile.height - srcY, remaining);
+        ctx.drawImage(tile, 0, srcY, tile.width, drawH, 0, destY, tile.width, drawH);
+
+        if (atEnd || actualY + 1 < y) break;
+        y = actualY + viewH;
+        await sleep(Math.max(220, profile.sliceDelayMs - 60));
+      }
+
+      return {
+        dataUrl: canvas.toDataURL("image/png"),
+        width: canvas.width,
+        height: canvas.height,
+        tiles: totalH > cappedCss ? 2 : 1,
+        kind: "element",
+      };
+    } finally {
+      removeProgressHud();
+      fixedHidden.forEach(([node, vis]) => (node.style.visibility = vis));
+      el.scrollTop = prevScrollTop;
+      el.scrollLeft = prevScrollLeft;
+      window.scrollTo(winScrollX, winScrollY);
+    }
+  }
+
+  async function captureElementFlow(msg = {}) {
+    let el = null;
+    if (msg.selector) {
+      el = document.querySelector(msg.selector);
+      if (!el) throw new Error("Element not found: " + msg.selector);
+      if (!isScrollable(el)) {
+        // Allow an explicit selector even if overflow heuristics are flaky
+        // (e.g. nested scrollers), as long as it has overflow content.
+        if (!(el.scrollHeight > el.clientHeight + 8)) {
+          throw new Error("Selected element is not scrollable.");
+        }
+      }
+    } else {
+      el = await pickScrollableElement();
+      if (!el) return { cancelled: true };
+    }
+    return stitchElement(el);
   }
 
   function requestSlice() {

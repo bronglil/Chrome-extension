@@ -487,7 +487,7 @@ async function ensureContentScript(tabId) {
     });
     api = inj?.result || 0;
   } catch (_) { /* restricted page or not injected yet */ }
-  if (api >= 4) return;
+  if (api >= 5) return;
   await chrome.scripting.insertCSS({
     target: { tabId },
     files: ["src/content/area-select.css"],
@@ -527,6 +527,20 @@ async function captureFullPage() {
   if (!result || result.error) throw new Error(result?.error || "Full-page capture failed.");
   await stashAndOpenEditor(result.dataUrl, pageMeta(tab, {
     kind: "fullpage",
+    width: result.width,
+    height: result.height,
+    tiles: result.tiles || 1,
+  }));
+}
+
+async function captureElement() {
+  const tab = await getCaptureTab();
+  await ensureContentScript(tab.id);
+  const result = await chrome.tabs.sendMessage(tab.id, { type: "START_ELEMENT_CAPTURE" });
+  if (!result || result.cancelled) return;
+  if (result.error) throw new Error(result.error || "Element capture failed.");
+  await stashAndOpenEditor(result.dataUrl, pageMeta(tab, {
+    kind: "element",
     width: result.width,
     height: result.height,
     tiles: result.tiles || 1,
@@ -721,6 +735,7 @@ function runCapture(action) {
     case "capture-visible": return captureVisibleArea();
     case "capture-area": return captureArea();
     case "capture-full-page": return captureFullPage();
+    case "capture-element": return captureElement();
     case "capture-fullscreen": return captureDesktop("screen");
     case "capture-window": return captureDesktop("window");
     case "ocr-area": return ocrArea();

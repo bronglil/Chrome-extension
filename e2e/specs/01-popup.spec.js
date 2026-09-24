@@ -9,6 +9,7 @@ test.describe("Popup UI", () => {
     await expect(page.locator('[data-action="capture-visible"]').first()).toBeVisible();
     await expect(page.locator('[data-action="capture-area"]').first()).toBeVisible();
     await expect(page.locator('[data-action="capture-full-page"]')).toBeVisible();
+    await expect(page.locator('[data-action="capture-element"]')).toBeVisible();
     await expect(page.locator('[data-action="ocr-area"]')).toBeVisible();
 
     // Delay presets.
