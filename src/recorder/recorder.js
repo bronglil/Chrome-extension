@@ -1368,19 +1368,32 @@ function closeTrimPanel() {
  * Trim by local re-encode: play the source WebM from start→end while
  * MediaRecorder captures `HTMLMediaElement.captureStream()`. No ffmpeg,
  * fully offline. Documented approach for #42.
+ *
+ * Video is muted so Chrome's autoplay policy allows play() after async seek
+ * (critical under CI / Xvfb where there is no sticky user-gesture).
  */
 function trimWebmBlob(blob, startSec, endSec) {
   return new Promise(async (resolve, reject) => {
     const video = document.createElement("video");
     video.playsInline = true;
-    video.muted = false;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.volume = 0;
     video.preload = "auto";
+    video.setAttribute("muted", "");
+    video.style.cssText = "position:fixed;left:-99999px;top:0;width:160px;height:90px;opacity:0;pointer-events:none";
+    document.body.appendChild(video);
     const src = URL.createObjectURL(blob);
     video.src = src;
 
     const cleanup = () => {
       try { URL.revokeObjectURL(src); } catch (_) { /* ignore */ }
-      try { video.removeAttribute("src"); video.load(); } catch (_) { /* ignore */ }
+      try {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+        video.remove();
+      } catch (_) { /* ignore */ }
     };
 
     try {
@@ -1388,15 +1401,35 @@ function trimWebmBlob(blob, startSec, endSec) {
         video.onloadedmetadata = () => res();
         video.onerror = () => rej(new Error("Could not load recording for trim"));
       });
-      const dur = video.duration || 0;
+      await fixWebmDuration(video);
+      let dur = video.duration || 0;
+      if (!Number.isFinite(dur) || dur <= 0) {
+        // Last resort: use caller end as duration bound.
+        dur = Math.max(endSec, startSec + 0.5, 1);
+      }
       const start = Math.max(0, Math.min(startSec, Math.max(0, dur - 0.25)));
       const end = Math.min(dur, Math.max(start + 0.25, endSec));
 
-      await new Promise((res) => {
-        const onSeeked = () => { video.removeEventListener("seeked", onSeeked); res(); };
+      await new Promise((res, rej) => {
+        const t = setTimeout(() => rej(new Error("Seek timed out")), 4000);
+        const onSeeked = () => {
+          clearTimeout(t);
+          video.removeEventListener("seeked", onSeeked);
+          res();
+        };
         video.addEventListener("seeked", onSeeked);
-        video.currentTime = start;
+        try {
+          video.currentTime = start;
+        } catch (err) {
+          clearTimeout(t);
+          rej(err);
+        }
       });
+      // Confirm we actually landed near the trim start.
+      if (Math.abs(video.currentTime - start) > 0.5) {
+        video.currentTime = start;
+        await new Promise((r) => setTimeout(r, 120));
+      }
 
       if (typeof video.captureStream !== "function") {
         cleanup();
@@ -1404,6 +1437,10 @@ function trimWebmBlob(blob, startSec, endSec) {
       }
 
       const stream = video.captureStream();
+      if (!stream.getVideoTracks().length) {
+        cleanup();
+        return reject(new Error("Trim capture stream has no video track"));
+      }
       const mime = pickMime(!!stream.getAudioTracks().length);
       let rec;
       try {
@@ -1419,7 +1456,13 @@ function trimWebmBlob(blob, startSec, endSec) {
       });
 
       rec.start(100);
-      await video.play();
+      try {
+        await video.play();
+      } catch (err) {
+        try { if (rec.state !== "inactive") rec.stop(); } catch (_) { /* ignore */ }
+        cleanup();
+        return reject(new Error("Trim playback failed: " + (err.message || err)));
+      }
 
       await new Promise((res) => {
         const tick = () => {
@@ -1432,6 +1475,12 @@ function trimWebmBlob(blob, startSec, endSec) {
           requestAnimationFrame(tick);
         };
         tick();
+        // Hard stop so a stuck play cannot hang forever.
+        setTimeout(() => {
+          try { video.pause(); } catch (_) { /* ignore */ }
+          try { if (rec.state !== "inactive") rec.stop(); } catch (_) { /* ignore */ }
+          res();
+        }, Math.ceil((end - start + 2) * 1000));
       });
 
       const out = await stopped;
@@ -1574,6 +1623,13 @@ $("#trim-save")?.addEventListener("click", async () => {
   const blob = state.trimBlob;
   if (!blob) return;
   const { start, end, duration } = getTrimRange();
+  if (!Number.isFinite(duration) || duration <= 0) {
+    toast("Recording length unknown — saving full file");
+    closeTrimPanel();
+    showSaving("Saving your recording…");
+    await downloadRecordingBlob(blob);
+    return;
+  }
   const almostFull = start <= 0.05 && end >= duration - 0.05;
   closeTrimPanel();
   if (almostFull) {
@@ -1589,9 +1645,13 @@ $("#trim-save")?.addEventListener("click", async () => {
     await downloadRecordingBlob(trimmed);
   } catch (err) {
     console.warn("[SnapShot] trim", err);
-    toast(err.message || "Trim failed — saving full recording");
-    showSaving("Saving your recording…");
-    await downloadRecordingBlob(blob);
+    // Don't silently ship the full recording — reopen so the user can Save full.
+    showSaving("Trim failed");
+    setStatus("Trim failed");
+    toast((err && err.message) || "Trim failed — use Save full, or try again");
+    $("#saving").hidden = true;
+    document.body.classList.remove("is-saving");
+    openTrimReview(blob);
   }
 });
 

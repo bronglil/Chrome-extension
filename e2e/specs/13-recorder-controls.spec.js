@@ -460,12 +460,15 @@ test.describe("Popup recording prefs", () => {
     expect(fullDur).toBeGreaterThan(1);
 
     // Keep roughly the middle ~40% of the clip.
-    await rec.evaluate(() => {
+    const range = await rec.evaluate(() => {
       document.getElementById("trim-start").value = "300";
       document.getElementById("trim-end").value = "700";
       document.getElementById("trim-start").dispatchEvent(new Event("input", { bubbles: true }));
       document.getElementById("trim-end").dispatchEvent(new Event("input", { bubbles: true }));
+      return window.__recorder.getTrimRange();
     });
+    expect(range.end - range.start).toBeGreaterThan(fullDur * 0.25);
+    expect(range.end - range.start).toBeLessThan(fullDur * 0.55);
 
     const [download] = await Promise.all([
       rec.waitForEvent("download", { timeout: 90_000 }),
@@ -480,6 +483,7 @@ test.describe("Popup recording prefs", () => {
       const url = URL.createObjectURL(blob);
       const v = document.createElement("video");
       v.preload = "metadata";
+      v.muted = true;
       v.src = url;
       await new Promise((res, rej) => {
         v.onloadedmetadata = () => res();
@@ -499,6 +503,7 @@ test.describe("Popup recording prefs", () => {
     }, [...buf]);
 
     expect(trimmedDur).toBeGreaterThan(0.3);
-    expect(trimmedDur).toBeLessThan(fullDur * 0.85);
+    // Re-encode can pad a little; still must be clearly shorter than the original.
+    expect(trimmedDur).toBeLessThan(fullDur * 0.75);
   });
 });
