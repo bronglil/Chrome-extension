@@ -143,6 +143,24 @@
     </div>
   </div>
 
+  <div class="trim" id="trim-panel" hidden>
+    <div class="trim__card">
+      <h2 class="trim__title">Trim recording</h2>
+      <p class="trim__sub">Drag the handles to cut the start or end, then save.</p>
+      <video class="trim__video" id="trim-video" playsinline controls></video>
+      <div class="trim__times" id="trim-times">0:00 – 0:00</div>
+      <div class="trim__range">
+        <label class="trim__label">Start <input type="range" id="trim-start" min="0" max="1000" value="0" step="1" /></label>
+        <label class="trim__label">End <input type="range" id="trim-end" min="0" max="1000" value="1000" step="1" /></label>
+      </div>
+      <div class="trim__actions">
+        <button class="btn btn--ghost btn--compact" id="trim-discard" type="button">Discard</button>
+        <button class="btn btn--ghost btn--compact" id="trim-full" type="button">Save full</button>
+        <button class="btn btn--primary btn--compact" id="trim-save" type="button">Save trimmed</button>
+      </div>
+    </div>
+  </div>
+
   <script src="recorder.js"></script>
 </body>
 </html>

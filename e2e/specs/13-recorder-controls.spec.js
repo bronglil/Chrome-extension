@@ -418,4 +418,87 @@ test.describe("Popup recording prefs", () => {
     await page.reload();
     await expect(page.locator("#rec-cues")).not.toBeChecked();
   });
+
+  test("trim review: Save trimmed shortens the WebM; fake mode skips UI", async ({ context, extensionId }) => {
+    test.setTimeout(120_000);
+
+    // fake=1 defaults to skipping trim (existing Save path).
+    const skip = await openStudio(context, extensionId, "cam=0&mic=0&audio=0&saveAs=0&fake=1");
+    await goLive(skip);
+    await skip.waitForTimeout(600);
+    const [dlSkip] = await Promise.all([
+      skip.waitForEvent("download", { timeout: 30_000 }),
+      skip.click("#btn-stop"),
+    ]);
+    expect(dlSkip.suggestedFilename()).toMatch(/\.webm$/i);
+    await expect(skip.locator("#trim-panel")).toBeHidden();
+    await skip.close().catch(() => {});
+
+    // Force trim UI with trim=1
+    const rec = await openStudio(context, extensionId, "cam=0&mic=0&audio=0&saveAs=0&fake=1&trim=1");
+    await goLive(rec);
+    await rec.waitForTimeout(4500);
+    await rec.click("#btn-stop");
+    await expect(rec.locator("#trim-panel")).toBeVisible({ timeout: 15_000 });
+    await expect(rec.locator("#trim-video")).toBeVisible();
+
+    const fullDur = await rec.evaluate(async () => {
+      const v = document.getElementById("trim-video");
+      // Same MediaRecorder duration fix used by the trim UI
+      if (!(Number.isFinite(v.duration) && v.duration > 0)) {
+        await new Promise((res) => {
+          const done = () => { v.removeEventListener("timeupdate", done); res(); };
+          v.addEventListener("timeupdate", done);
+          try { v.currentTime = 1e101; } catch (_) { res(); }
+          setTimeout(res, 2000);
+        });
+        try { v.currentTime = 0; } catch (_) { /* ignore */ }
+      }
+      return v.duration;
+    });
+    expect(Number.isFinite(fullDur)).toBe(true);
+    expect(fullDur).toBeGreaterThan(1);
+
+    // Keep roughly the middle ~40% of the clip.
+    await rec.evaluate(() => {
+      document.getElementById("trim-start").value = "300";
+      document.getElementById("trim-end").value = "700";
+      document.getElementById("trim-start").dispatchEvent(new Event("input", { bubbles: true }));
+      document.getElementById("trim-end").dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const [download] = await Promise.all([
+      rec.waitForEvent("download", { timeout: 90_000 }),
+      rec.click("#trim-save"),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/\.webm$/i);
+    const file = await download.path();
+    const buf = require("node:fs").readFileSync(file);
+
+    const trimmedDur = await rec.evaluate(async (bytes) => {
+      const blob = new Blob([new Uint8Array(bytes)], { type: "video/webm" });
+      const url = URL.createObjectURL(blob);
+      const v = document.createElement("video");
+      v.preload = "metadata";
+      v.src = url;
+      await new Promise((res, rej) => {
+        v.onloadedmetadata = () => res();
+        v.onerror = () => rej(new Error("metadata failed"));
+      });
+      if (!(Number.isFinite(v.duration) && v.duration > 0)) {
+        await new Promise((res) => {
+          const done = () => { v.removeEventListener("timeupdate", done); res(); };
+          v.addEventListener("timeupdate", done);
+          try { v.currentTime = 1e101; } catch (_) { res(); }
+          setTimeout(res, 2000);
+        });
+      }
+      const d = v.duration;
+      URL.revokeObjectURL(url);
+      return d;
+    }, [...buf]);
+
+    expect(trimmedDur).toBeGreaterThan(0.3);
+    expect(trimmedDur).toBeLessThan(fullDur * 0.85);
+  });
 });
