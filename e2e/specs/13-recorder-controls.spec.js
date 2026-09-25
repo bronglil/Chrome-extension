@@ -442,9 +442,16 @@ test.describe("Popup recording prefs", () => {
     await expect(rec.locator("#trim-panel")).toBeVisible({ timeout: 15_000 });
     await expect(rec.locator("#trim-video")).toBeVisible();
 
+    // Wait until duration is fixed and sliders are seeded — a late
+    // onloadedmetadata must not wipe the range we set next.
+    await rec.waitForFunction(() => {
+      const R = window.__recorder;
+      const dur = R?.state?.trimDuration || document.getElementById("trim-video")?.duration;
+      return R?.state?.trimSlidersReady && Number.isFinite(dur) && dur > 1;
+    }, null, { timeout: 15_000 });
+
     const fullDur = await rec.evaluate(async () => {
       const v = document.getElementById("trim-video");
-      // Same MediaRecorder duration fix used by the trim UI
       if (!(Number.isFinite(v.duration) && v.duration > 0)) {
         await new Promise((res) => {
           const done = () => { v.removeEventListener("timeupdate", done); res(); };
@@ -454,7 +461,10 @@ test.describe("Popup recording prefs", () => {
         });
         try { v.currentTime = 0; } catch (_) { /* ignore */ }
       }
-      return v.duration;
+      const d = window.__recorder.state.trimDuration || v.duration;
+      if (Number.isFinite(d) && d > 0) window.__recorder.state.trimDuration = d;
+      window.__recorder.state.trimSlidersReady = true;
+      return d;
     });
     expect(Number.isFinite(fullDur)).toBe(true);
     expect(fullDur).toBeGreaterThan(1);
@@ -465,10 +475,17 @@ test.describe("Popup recording prefs", () => {
       document.getElementById("trim-end").value = "700";
       document.getElementById("trim-start").dispatchEvent(new Event("input", { bubbles: true }));
       document.getElementById("trim-end").dispatchEvent(new Event("input", { bubbles: true }));
+      // Mark ready so a late metadata handler cannot reset 0/1000.
+      window.__recorder.state.trimSlidersReady = true;
       return window.__recorder.getTrimRange();
     });
     expect(range.end - range.start).toBeGreaterThan(fullDur * 0.25);
     expect(range.end - range.start).toBeLessThan(fullDur * 0.55);
+
+    // Re-check immediately before save — catch slider-reset races.
+    const rangeAtSave = await rec.evaluate(() => window.__recorder.getTrimRange());
+    expect(rangeAtSave.start).toBeGreaterThan(fullDur * 0.2);
+    expect(rangeAtSave.end).toBeLessThan(fullDur * 0.8);
 
     const [download] = await Promise.all([
       rec.waitForEvent("download", { timeout: 90_000 }),
@@ -502,10 +519,9 @@ test.describe("Popup recording prefs", () => {
       return d;
     }, [...buf]);
 
-    const want = range.end - range.start;
+    const want = rangeAtSave.end - rangeAtSave.start;
     expect(trimmedDur).toBeGreaterThan(0.3);
-    // Wall-clock re-encode should track the selected window (± slack for
-    // MediaRecorder keyframe / WebM duration quirks), and stay well under full.
+    // Must be the re-encoded window — not the untouched source (~fullDur).
     expect(trimmedDur).toBeLessThan(want * 1.6 + 0.4);
     expect(trimmedDur).toBeLessThan(fullDur * 0.7);
   });
