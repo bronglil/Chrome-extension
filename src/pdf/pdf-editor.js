@@ -19,14 +19,28 @@ const DEVICE = U.deviceProfile();
 
 // Fit the page to the editor width, then rasterize at device pixel ratio so
 // type stays sharp on retina without blowing memory on low-power machines.
-function pageDisplayScale(page) {
+function pageDisplayScale(page, rotation) {
   const wrap = $("#pe-stage-wrap");
   const avail = Math.max(360, (wrap?.clientWidth || 720) - 56);
-  const base = page.getViewport({ scale: 1 });
+  const base = page.getViewport({
+    scale: 1,
+    rotation: rotation == null ? page.rotate || 0 : rotation,
+  });
   return avail / base.width;
 }
 function rasterDpr() {
   return Math.min(DEVICE.maxPixelRatio || 2, window.devicePixelRatio || 1, 2.5);
+}
+
+/** Absolute page rotation for pdf.js (built-in rotate + user turns). */
+function totalRotation(page, num) {
+  const base = page?.rotate || 0;
+  const extra = state.pageRotations[num] || 0;
+  return (base + extra + 360) % 360;
+}
+
+function userRotation(num) {
+  return (state.pageRotations[num] || 0) % 360;
 }
 
 const state = {
@@ -44,6 +58,7 @@ const state = {
   // Per-page overlay JSON + the pixel viewport used when rendered.
   pageOverlays: {},    // { [pageNum]: konvaJSON }
   pageSizes: {},       // { [pageNum]: {w,h} } in rendered pixels
+  pageRotations: {},   // { [pageNum]: 0|90|180|270 } user turns on top of PDF /Rotate
   acknowledge: false,  // stamp "AK" at the bottom of every page
   ackLayer: null,      // on-screen AK badge (redrawn per page; not serialized)
   pageCanvas: null,    // the rendered pixels of the current page (for occupancy checks)
@@ -118,11 +133,14 @@ async function openPdf(arrayBuffer, name) {
   state.pageNum = 1;
   state.pageOverlays = {};
   state.pageSizes = {};
+  state.pageRotations = {};
   const chip = $("#pe-file");
   chip.textContent = state.fileName;
   chip.hidden = false;
   $("#pe-empty").hidden = true;
   $("#pe-save").disabled = false;
+  $("#pe-rotate-cw").disabled = false;
+  $("#pe-rotate-ccw").disabled = false;
   await renderAllPages();
   updatePager();
 }
@@ -161,10 +179,10 @@ function clearViews() {
   if (host) host.innerHTML = "";
 }
 
-function unmountPage(num) {
+function unmountPage(num, { skipSave = false } = {}) {
   const view = state.views[num];
   if (!view) return;
-  saveOverlay(num);
+  if (!skipSave) saveOverlay(num);
   try { view.stage.destroy(); } catch (_) { /* already gone */ }
   if (view.pageCanvas) {
     view.pageCanvas.width = 0;
@@ -203,8 +221,9 @@ function activatePage(num, { scroll = false } = {}) {
 async function mountPage(num, container) {
   const page = await state.pdfDoc.getPage(num);
   const dpr = rasterDpr();
-  const fit = pageDisplayScale(page);
-  const viewport = page.getViewport({ scale: fit * dpr });
+  const rotation = totalRotation(page, num);
+  const fit = pageDisplayScale(page, rotation);
+  const viewport = page.getViewport({ scale: fit * dpr, rotation });
   const displayW = Math.max(1, Math.round(viewport.width / dpr));
   const displayH = Math.max(1, Math.round(viewport.height / dpr));
 
@@ -220,7 +239,7 @@ async function mountPage(num, container) {
   if (prev && prev.w && Math.abs(prev.w - displayW) > 2) {
     scaleSavedOverlay(num, displayW / prev.w);
   }
-  state.pageSizes[num] = { w: displayW, h: displayH, dpr };
+  state.pageSizes[num] = { w: displayW, h: displayH, dpr, rotation };
 
   Konva.pixelRatio = dpr;
   const stage = new Konva.Stage({ container, width: displayW, height: displayH });
@@ -260,15 +279,16 @@ async function renderAllPages() {
   const dpr = rasterDpr();
   for (let n = 1; n <= state.numPages; n++) {
     const page = await state.pdfDoc.getPage(n);
-    const fit = pageDisplayScale(page);
-    const vp = page.getViewport({ scale: fit });
+    const rotation = totalRotation(page, n);
+    const fit = pageDisplayScale(page, rotation);
+    const vp = page.getViewport({ scale: fit, rotation });
     const displayW = Math.max(1, Math.round(vp.width));
     const displayH = Math.max(1, Math.round(vp.height));
     const prev = state.pageSizes[n];
     if (prev && prev.w && Math.abs(prev.w - displayW) > 2) {
       scaleSavedOverlay(n, displayW / prev.w);
     }
-    state.pageSizes[n] = { w: displayW, h: displayH, dpr };
+    state.pageSizes[n] = { w: displayW, h: displayH, dpr, rotation };
 
     const card = document.createElement("section");
     card.className = "pe-page";
@@ -415,7 +435,132 @@ function reviveImages(node, layer) {
 function updatePager() {
   const info = $("#pe-pageinfo");
   if (info) info.textContent = state.numPages ? `${state.pageNum} / ${state.numPages}` : "— / —";
+  syncRotateUi();
 }
+
+function syncRotateUi() {
+  const has = !!state.pdfDoc;
+  const cw = $("#pe-rotate-cw");
+  const ccw = $("#pe-rotate-ccw");
+  const label = $("#pe-rotate-label");
+  if (cw) cw.disabled = !has;
+  if (ccw) ccw.disabled = !has;
+  if (label) {
+    const scope = rotateScope();
+    if (!has) {
+      label.textContent = "Rotation: 0°";
+    } else if (scope === "all") {
+      const deg = userRotation(1);
+      const same = Array.from({ length: state.numPages }, (_, i) => userRotation(i + 1))
+        .every((d) => d === deg);
+      label.textContent = same
+        ? `Rotation: ${deg}° · all pages`
+        : `Mixed rotations · all pages`;
+    } else {
+      const deg = userRotation(state.pageNum);
+      label.textContent = deg ? `Rotation: ${deg}° · this page` : "Rotation: 0° · this page";
+    }
+  }
+}
+
+function rotateScope() {
+  const active = document.querySelector("#pe-rotate-scope .seg__btn.is-active");
+  return active?.dataset.rotateScope === "all" ? "all" : "page";
+}
+
+function clearPageAnnotations(num) {
+  delete state.pageOverlays[num];
+  const view = state.views[num];
+  if (!view?.overlayLayer) return;
+  try {
+    const layer = view.overlayLayer;
+    const tf = view.transformer;
+    if (tf) tf.nodes([]);
+    layer.getChildren().slice().forEach((n) => {
+      if (n === tf || n.className === "Transformer") return;
+      try { n.destroy(); } catch (_) { /* ignore */ }
+    });
+    layer.draw();
+  } catch (_) { /* ignore */ }
+}
+
+async function relayoutPageSlot(num) {
+  const page = await state.pdfDoc.getPage(num);
+  const rotation = totalRotation(page, num);
+  const fit = pageDisplayScale(page, rotation);
+  const vp = page.getViewport({ scale: fit, rotation });
+  const displayW = Math.max(1, Math.round(vp.width));
+  const displayH = Math.max(1, Math.round(vp.height));
+  const dpr = rasterDpr();
+  state.pageSizes[num] = { w: displayW, h: displayH, dpr, rotation };
+
+  const slot = state.slots[num];
+  if (slot) {
+    slot.w = displayW;
+    slot.h = displayH;
+    if (slot.stageEl) {
+      slot.stageEl.style.width = displayW + "px";
+      slot.stageEl.style.height = displayH + "px";
+    }
+  }
+
+  if (state.views[num]) {
+    unmountPage(num, { skipSave: true });
+  }
+}
+
+/**
+ * Rotate by ±90°. Scope is "This page" or "All pages" from the inspector toggle.
+ * Annotations on affected pages are cleared (coordinate space changes).
+ */
+async function rotatePage(delta) {
+  if (!state.pdfDoc || !state.pageNum) {
+    toast("Open a PDF first");
+    return;
+  }
+  const scope = rotateScope();
+  const targets = scope === "all"
+    ? Array.from({ length: state.numPages }, (_, i) => i + 1)
+    : [state.pageNum];
+
+  for (const num of targets) {
+    const next = (userRotation(num) + delta + 360) % 360;
+    state.pageRotations[num] = next;
+    clearPageAnnotations(num);
+    await relayoutPageSlot(num);
+  }
+
+  // Remount pages that should be live (current + neighbors).
+  await syncLivePages();
+  if (!state.views[state.pageNum]) await ensureMounted(state.pageNum);
+  activatePage(state.pageNum);
+  syncRotateUi();
+
+  if (scope === "all") {
+    const deg = userRotation(1);
+    toast(deg ? `All ${targets.length} pages → ${deg}°` : "All pages upright");
+  } else {
+    const deg = userRotation(state.pageNum);
+    toast(deg ? `Page ${state.pageNum} → ${deg}°` : `Page ${state.pageNum} upright`);
+  }
+}
+
+document.querySelectorAll("#pe-rotate-scope .seg__btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#pe-rotate-scope .seg__btn").forEach((b) => {
+      b.classList.toggle("is-active", b === btn);
+      b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+    });
+    syncRotateUi();
+  });
+});
+
+$("#pe-rotate-cw")?.addEventListener("click", () => {
+  rotatePage(90).catch((err) => toast(err.message || "Rotate failed"));
+});
+$("#pe-rotate-ccw")?.addEventListener("click", () => {
+  rotatePage(-90).catch((err) => toast(err.message || "Rotate failed"));
+});
 
 function pagesToKeepLive() {
   const want = new Set();
@@ -626,8 +771,14 @@ function bindStage(view) {
       return;
     }
     if (state.tool === "pen" || state.tool === "highlight") startDraw(e);
+    if (state.tool === "redact") startRedact(e);
   });
-  stage.on("mousemove.pdfed touchmove.pdfed", (e) => { if (state.drawing) extendDraw(e); });
+  stage.on("mousemove.pdfed touchmove.pdfed", (e) => {
+    if (state.drawing) {
+      if (state.drawing.tool === "redact") extendRedact(e);
+      else extendDraw(e);
+    }
+  });
   stage.on("mouseup.pdfed touchend.pdfed", endDraw);
 
   stage.on("click.pdfed tap.pdfed", (e) => {
@@ -663,7 +814,12 @@ function bindStage(view) {
 
 function pointer(evt, stage = state.stage) {
   if (!stage) return null;
-  const el = stage.container().querySelector("canvas") || stage.container();
+  // Prefer the Konva content box — it matches the visible page and stays
+  // aligned even when buffer canvases use a higher devicePixelRatio.
+  const el =
+    stage.container().querySelector(".konvajs-content") ||
+    stage.container().querySelector("canvas") ||
+    stage.container();
   const box = el.getBoundingClientRect();
   if (!box.width || !box.height) return stage.getPointerPosition();
   const native = evt && evt.evt ? evt.evt : evt;
@@ -685,9 +841,26 @@ function pointer(evt, stage = state.stage) {
   };
 }
 
+/** Map stage coords → client (for tests / hit-checking). */
+function clientFromStage(x, y, stage = state.stage) {
+  if (!stage) return null;
+  const el =
+    stage.container().querySelector(".konvajs-content") ||
+    stage.container().querySelector("canvas") ||
+    stage.container();
+  const box = el.getBoundingClientRect();
+  if (!box.width || !box.height) return null;
+  return {
+    x: box.left + (x / stage.width()) * box.width,
+    y: box.top + (y / stage.height()) * box.height,
+  };
+}
+
 function onDocDrawMove(e) {
   if (e.cancelable && e.type === "touchmove") e.preventDefault();
-  if (state.drawing) extendDraw(e);
+  if (!state.drawing) return;
+  if (state.drawing.tool === "redact") extendRedact(e);
+  else extendDraw(e);
 }
 function onDocDrawUp() {
   endDraw();
@@ -695,7 +868,20 @@ function onDocDrawUp() {
 
 function endDraw() {
   if (state.drawing) {
-    try { state.drawing.node.draggable(true); } catch (_) { /* ignore */ }
+    if (state.drawing.tool === "redact") {
+      const node = state.drawing.node;
+      if (node.width() < 4 || node.height() < 4) node.destroy();
+      else {
+        node.fill("#000000");
+        node.strokeEnabled(false);
+        node.opacity(1);
+        node.dash([]);
+        node.name("redact");
+        try { node.draggable(true); } catch (_) { /* ignore */ }
+      }
+    } else {
+      try { state.drawing.node.draggable(true); } catch (_) { /* ignore */ }
+    }
     state.drawing = null;
   }
   window.removeEventListener("mousemove", onDocDrawMove, true);
@@ -732,6 +918,36 @@ function extendDraw(evt) {
   const p = pointer(evt);
   if (!p || !state.drawing) return;
   state.drawing.node.points(state.drawing.node.points().concat([p.x, p.y]));
+  state.overlayLayer.batchDraw();
+}
+
+function startRedact(evt) {
+  const p = pointer(evt);
+  if (!p) return;
+  const node = new Konva.Rect({
+    x: p.x, y: p.y, width: 0, height: 0,
+    fill: "rgba(0,0,0,0.55)",
+    stroke: "#111827",
+    strokeWidth: 1,
+    dash: [4, 4],
+    name: "redact-marquee",
+  });
+  state.overlayLayer.add(node);
+  state.drawing = { node, start: p, tool: "redact" };
+  window.addEventListener("mousemove", onDocDrawMove, true);
+  window.addEventListener("mouseup", onDocDrawUp, true);
+  window.addEventListener("touchmove", onDocDrawMove, { capture: true, passive: false });
+  window.addEventListener("touchend", onDocDrawUp, true);
+}
+
+function extendRedact(evt) {
+  const p = pointer(evt);
+  if (!p || !state.drawing || state.drawing.tool !== "redact") return;
+  const { node, start } = state.drawing;
+  node.x(Math.min(start.x, p.x));
+  node.y(Math.min(start.y, p.y));
+  node.width(Math.abs(p.x - start.x));
+  node.height(Math.abs(p.y - start.y));
   state.overlayLayer.batchDraw();
 }
 
@@ -990,10 +1206,13 @@ function openSigModal() {
 function closeSigModal() { $("#pe-sig-modal").hidden = true; }
 $("#pe-sig-cancel").addEventListener("click", closeSigModal);
 
-document.querySelectorAll(".seg__btn").forEach((t) =>
+document.querySelectorAll("#pe-sig-modal .seg__btn").forEach((t) =>
   t.addEventListener("click", () => setSigTab(t.dataset.sig)));
 function setSigTab(name) {
-  document.querySelectorAll(".seg__btn").forEach((t) => t.classList.toggle("is-active", t.dataset.sig === name));
+  if (!name) return;
+  document.querySelectorAll("#pe-sig-modal .seg__btn").forEach((t) => {
+    t.classList.toggle("is-active", t.dataset.sig === name);
+  });
   document.querySelectorAll(".sig-pane").forEach((p) => (p.hidden = p.dataset.pane !== name));
 }
 
@@ -1032,7 +1251,7 @@ $("#pe-sig-file").addEventListener("change", async (e) => {
 
 // Produce the signature image for the active tab.
 async function buildSignature() {
-  const active = document.querySelector(".seg__btn.is-active").dataset.sig;
+  const active = document.querySelector("#pe-sig-modal .seg__btn.is-active")?.dataset.sig;
   if (active === "draw") {
     if (!padHasInk) return null;
     return pad.toDataURL("image/png");
@@ -1094,18 +1313,50 @@ async function exportPdf() {
     progress("Preparing…", 0.1);
     saveAllOverlays();
 
-    const { PDFDocument } = PDFLib;
+    const { PDFDocument, degrees } = PDFLib;
     const pdf = await PDFDocument.load(state.pdfBytes);
     const pages = pdf.getPages();
+
+    // Apply user page rotations. Pages that also have ink are handled below via
+    // a visual flatten (rotation baked into the bitmap) so strokes stay aligned.
+    for (let i = 0; i < pages.length; i++) {
+      const num = i + 1;
+      const extra = userRotation(num);
+      if (!extra) continue;
+      const hasInk = (() => {
+        try {
+          const raw = state.pageOverlays[num];
+          if (!raw) return false;
+          const parsed = JSON.parse(raw);
+          return !!(parsed.children && parsed.children.length);
+        } catch (_) { return false; }
+      })();
+      if (hasInk) continue; // flattened path applies orientation
+      const page = pages[i];
+      const cur = page.getRotation().angle;
+      page.setRotation(degrees((cur + extra) % 360));
+    }
 
     const annotated = Object.keys(state.pageOverlays);
     for (let i = 0; i < annotated.length; i++) {
       const num = +annotated[i];
       progress("Embedding page " + num + "…", 0.1 + 0.8 * (i / annotated.length));
+      const extra = userRotation(num);
+      const mustBurn = extra || pageHasRedact(num);
+
+      if (mustBurn) {
+        // Bake page + overlays into one image, then REPLACE the page so underlying
+        // text/content streams cannot be recovered (true redaction).
+        const flat = await flattenPageVisual(num);
+        if (!flat) continue;
+        await replacePageWithImage(pdf, num - 1, flat, extra ? degrees(0) : null);
+        continue;
+      }
+
+      const page = pdf.getPages()[num - 1];
       const pngDataUrl = await overlayPng(num);
       if (!pngDataUrl) continue;
       const png = await pdf.embedPng(pngDataUrl);
-      const page = pages[num - 1];
       const { width, height } = page.getSize();
       page.drawImage(png, { x: 0, y: 0, width, height });
     }
@@ -1191,5 +1442,93 @@ async function overlayPng(num) {
   return dataUrl;
 }
 
+/** Full visual page (rotated PDF raster + overlays) for export after rotate. */
+async function flattenPageVisual(num) {
+  const page = await state.pdfDoc.getPage(num);
+  const dpr = Math.max(2, rasterDpr());
+  const rotation = totalRotation(page, num);
+  const fit = pageDisplayScale(page, rotation);
+  const viewport = page.getViewport({ scale: fit * dpr, rotation });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  const ctx = canvas.getContext("2d", { alpha: false });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport, intent: "display" }).promise;
+
+  const overlayUrl = await overlayPng(num);
+  if (overlayUrl) {
+    await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => {
+        ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
+        resolve();
+      };
+      im.onerror = reject;
+      im.src = overlayUrl;
+    });
+  }
+  return canvas.toDataURL("image/png");
+}
+
+/** True if page overlay JSON (or live layer) includes a permanent redact rect. */
+function pageHasRedact(num) {
+  try {
+    if (state.pageNum === num && state.overlayLayer) {
+      if (state.overlayLayer.find(".redact").length) return true;
+    }
+    const raw = state.pageOverlays[num];
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    const walk = (nodes) => {
+      for (const n of nodes || []) {
+        if (n.attrs?.name === "redact" || n.attrs?.name === "redact-marquee") return true;
+        if (n.children && walk(n.children)) return true;
+      }
+      return false;
+    };
+    return walk(parsed.children);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Replace a PDF page with an image-only page so prior content streams
+ * (selectable text) cannot be recovered — required for true redaction.
+ */
+async function replacePageWithImage(pdf, pageIndex, dataUrl, forceRotation) {
+  const pages = pdf.getPages();
+  const page = pages[pageIndex];
+  let { width, height } = page.getSize();
+  const png = await pdf.embedPng(dataUrl);
+  const visW = png.width;
+  const visH = png.height;
+  const visualLandscape = visW >= visH;
+  const boxLandscape = width >= height;
+  if (visualLandscape !== boxLandscape) {
+    // Match media box to baked visual orientation (same as prior rotate flatten).
+    const tmp = width;
+    width = height;
+    height = tmp;
+  }
+  if (forceRotation != null) {
+    try { page.setRotation(forceRotation); } catch (_) { /* ignore */ }
+  }
+  // Insert a blank page with only the bitmap, then drop the original page
+  // (which still held text/content streams underneath any overlay).
+  const blank = pdf.insertPage(pageIndex, [width, height]);
+  if (forceRotation != null) {
+    try { blank.setRotation(forceRotation); } catch (_) { /* ignore */ }
+  }
+  blank.drawImage(png, { x: 0, y: 0, width, height });
+  pdf.removePage(pageIndex + 1);
+}
+
 // Expose a couple of internals for E2E tests.
-window.__pdfEditor = { state, openPdf, exportPdf, chooseAckSide, editText, addTextAt, goToPage };
+window.__pdfEditor = {
+  state, openPdf, exportPdf, chooseAckSide, editText, addTextAt, goToPage,
+  pointer, clientFromStage, rotatePage, userRotation, totalRotation, rotateScope,
+  pageHasRedact, flattenPageVisual, replacePageWithImage,
+};

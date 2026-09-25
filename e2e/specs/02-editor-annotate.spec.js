@@ -102,4 +102,61 @@ test.describe("Editor — annotation tools", () => {
     const w1 = await page.evaluate(() => window.Konva.stages[0].width());
     expect(w1).toBe(w0 + 80); // padding added on both sides
   });
+
+  test("redact permanently blacks base pixels; undo restores them", async ({ context, extensionId }) => {
+    const img = await makeImageDataUrl(context, {
+      w: 400,
+      h: 200,
+      bg: "#ffffff",
+      text: "SECRET99",
+      textColor: "#111111",
+      font: 48,
+    });
+    const id = await seedCapture(context, img);
+    const page = await openEditor(context, extensionId, id);
+    await page.waitForFunction(() => window.__editor?.state?.baseImage);
+
+    const before = await page.evaluate(() => {
+      const c = window.__editor.getBaseCanvas();
+      // White background above the text baseline
+      const d = c.getContext("2d").getImageData(40, 40, 1, 1).data;
+      return [d[0], d[1], d[2]];
+    });
+    expect(before[0]).toBeGreaterThan(200);
+
+    await selectTool(page, "redact");
+    await dragOnStage(page, { x: 20, y: 30 }, { x: 280, y: 160 });
+    await page.waitForFunction(() => {
+      const c = window.__editor.getBaseCanvas();
+      if (!c || !window.__editor.state.baseHistory.length) return false;
+      const d = c.getContext("2d").getImageData(40, 40, 1, 1).data;
+      return d[0] + d[1] + d[2] < 80;
+    });
+
+    const after = await page.evaluate(() => {
+      const c = window.__editor.getBaseCanvas();
+      const d = c.getContext("2d").getImageData(40, 40, 1, 1).data;
+      const exported = window.__editor.flatten("image/png");
+      return { pixel: [d[0], d[1], d[2]], exported };
+    });
+    // Near-black after redact (noise shred keeps values low)
+    expect(after.pixel[0] + after.pixel[1] + after.pixel[2]).toBeLessThan(80);
+    expect(after.exported.startsWith("data:image/png")).toBe(true);
+    // Exported PNG must not still embed the raw ASCII secret as a string
+    expect(Buffer.from(after.exported.split(",")[1], "base64").toString("latin1")).not.toContain("SECRET99");
+
+    await page.click("#btn-undo");
+    await page.waitForFunction(() => {
+      if (window.__editor.state.baseHistory.length !== 0) return false;
+      const c = window.__editor.getBaseCanvas();
+      const d = c.getContext("2d").getImageData(40, 40, 1, 1).data;
+      return d[0] > 200;
+    });
+    const restored = await page.evaluate(() => {
+      const c = window.__editor.getBaseCanvas();
+      const d = c.getContext("2d").getImageData(40, 40, 1, 1).data;
+      return [d[0], d[1], d[2]];
+    });
+    expect(restored[0]).toBeGreaterThan(200);
+  });
 });

@@ -135,4 +135,55 @@ test.describe("Capture pipeline (content script)", () => {
     await expect(page.locator(".snapshot-copybar")).toBeVisible();
     await expect(page.locator(".snapshot-copybar__text")).toHaveValue("Hello from box");
   });
+
+  test("element scroll-and-stitch captures #chat without moving the page", async ({ context }) => {
+    test.setTimeout(90_000);
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${PORT}/scroll-pane.html`);
+    await page.bringToFront();
+    const tabId = await tabIdFor(context, "scroll-pane.html");
+    expect(tabId).not.toBeNull();
+
+    const metrics = await page.evaluate(() => {
+      const chat = document.getElementById("chat");
+      return {
+        clientH: chat.clientHeight,
+        scrollH: chat.scrollHeight,
+        pageY: window.scrollY,
+      };
+    });
+    expect(metrics.scrollH).toBeGreaterThan(metrics.clientH + 100);
+
+    const result = await (await sw(context)).evaluate(async (tabId) => {
+      await chrome.scripting.insertCSS({ target: { tabId }, files: ["src/content/area-select.css"] });
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["src/lib/utils.js", "src/content/content.js"] });
+      const r = await chrome.tabs.sendMessage(tabId, {
+        type: "START_ELEMENT_CAPTURE",
+        selector: "#chat",
+      });
+      return {
+        error: r?.error || null,
+        cancelled: !!r?.cancelled,
+        height: r?.height || 0,
+        width: r?.width || 0,
+        len: (r?.dataUrl || "").length,
+        kind: r?.kind || null,
+      };
+    }, tabId);
+
+    expect(result.error).toBeNull();
+    expect(result.cancelled).toBe(false);
+    expect(result.kind).toBe("element");
+    // Stitched image should be taller than one pane viewport (CSS px × dpr ≈).
+    expect(result.height).toBeGreaterThan(metrics.clientH);
+    expect(result.height).toBeGreaterThan(metrics.clientH * 1.4);
+    expect(result.len).toBeGreaterThan(1000);
+
+    const after = await page.evaluate(() => ({
+      pageY: window.scrollY,
+      chatTop: document.getElementById("chat").scrollTop,
+    }));
+    expect(after.pageY).toBe(metrics.pageY);
+    expect(after.chatTop).toBe(0); // restored after stitch
+  });
 });

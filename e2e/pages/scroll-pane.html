@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Scroll Pane Fixture</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    body { font-family: sans-serif; background: #f3f4f6; padding: 24px; }
+    h1 { font-size: 22px; margin-bottom: 12px; }
+    .layout { display: flex; gap: 16px; height: 420px; }
+    .side {
+      width: 180px; background: #fff; border: 1px solid #d1d5db;
+      border-radius: 8px; padding: 12px; overflow: hidden;
+    }
+    #chat {
+      flex: 1;
+      height: 100%;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .msg {
+      height: 140px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 28px;
+      font-weight: 700;
+    }
+    #m1 { background: #1d4ed8; }
+    #m2 { background: #047857; }
+    #m3 { background: #b45309; }
+    #m4 { background: #7e22ce; }
+    #m5 { background: #be123c; }
+    #m6 { background: #0f766e; }
+    #outer-marker { margin-top: 24px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <h1>Element capture fixture</h1>
+  <div class="layout">
+    <aside class="side">Sidebar (not the target)</aside>
+    <div id="chat" data-testid="chat-pane">
+      <div class="msg" id="m1">MSG 1</div>
+      <div class="msg" id="m2">MSG 2</div>
+      <div class="msg" id="m3">MSG 3</div>
+      <div class="msg" id="m4">MSG 4</div>
+      <div class="msg" id="m5">MSG 5</div>
+      <div class="msg" id="m6">MSG 6</div>
+    </div>
+  </div>
+  <p id="outer-marker">Outer page stays put — only #chat should scroll.</p>
+</body>
+</html>

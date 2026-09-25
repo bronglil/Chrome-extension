@@ -487,7 +487,7 @@ async function ensureContentScript(tabId) {
     });
     api = inj?.result || 0;
   } catch (_) { /* restricted page or not injected yet */ }
-  if (api >= 4) return;
+  if (api >= 5) return;
   await chrome.scripting.insertCSS({
     target: { tabId },
     files: ["src/content/area-select.css"],
@@ -527,6 +527,20 @@ async function captureFullPage() {
   if (!result || result.error) throw new Error(result?.error || "Full-page capture failed.");
   await stashAndOpenEditor(result.dataUrl, pageMeta(tab, {
     kind: "fullpage",
+    width: result.width,
+    height: result.height,
+    tiles: result.tiles || 1,
+  }));
+}
+
+async function captureElement() {
+  const tab = await getCaptureTab();
+  await ensureContentScript(tab.id);
+  const result = await chrome.tabs.sendMessage(tab.id, { type: "START_ELEMENT_CAPTURE" });
+  if (!result || result.cancelled) return;
+  if (result.error) throw new Error(result.error || "Element capture failed.");
+  await stashAndOpenEditor(result.dataUrl, pageMeta(tab, {
+    kind: "element",
     width: result.width,
     height: result.height,
     tiles: result.tiles || 1,
@@ -654,10 +668,20 @@ async function toggleRecording(options = {}) {
     try { await chrome.windows.remove(existing.windowId); } catch (_) { /* gone */ }
   }
 
+  const quality = ["720", "1080", "1440"].includes(String(options.quality))
+    ? String(options.quality)
+    : "720";
+  const pip = ["bl", "bc", "br"].includes(String(options.pip))
+    ? String(options.pip)
+    : "bc";
   const qs = new URLSearchParams({
     cam: options.camera ? "1" : "0",
     mic: options.mic ? "1" : "0",
     audio: options.systemAudio ? "1" : "0",
+    q: quality,
+    pip,
+    blur: options.blur ? "1" : "0",
+    cues: options.cues === false || options.cues === 0 || options.cues === "0" ? "0" : "1",
     autostart: "1",
   });
   const win = await chrome.windows.create({
@@ -711,6 +735,7 @@ function runCapture(action) {
     case "capture-visible": return captureVisibleArea();
     case "capture-area": return captureArea();
     case "capture-full-page": return captureFullPage();
+    case "capture-element": return captureElement();
     case "capture-fullscreen": return captureDesktop("screen");
     case "capture-window": return captureDesktop("window");
     case "ocr-area": return ocrArea();
@@ -844,7 +869,15 @@ chrome.commands.onCommand.addListener(async (command) => {
       const prefs = (await chrome.storage.local.get("recPrefs")).recPrefs || {};
       await toggleRecording(recordingState?.active
         ? {}
-        : { camera: !!prefs.camera, mic: !!prefs.mic, systemAudio: !!prefs.systemAudio });
+        : {
+          camera: !!prefs.camera,
+          mic: !!prefs.mic,
+          systemAudio: !!prefs.systemAudio,
+          quality: prefs.quality || "720",
+          pip: prefs.pip || "bc",
+          blur: !!prefs.blur,
+          cues: prefs.cues !== false,
+        });
     } else {
       await runCapture(command);
     }

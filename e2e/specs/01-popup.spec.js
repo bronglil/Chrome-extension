@@ -9,6 +9,7 @@ test.describe("Popup UI", () => {
     await expect(page.locator('[data-action="capture-visible"]').first()).toBeVisible();
     await expect(page.locator('[data-action="capture-area"]').first()).toBeVisible();
     await expect(page.locator('[data-action="capture-full-page"]')).toBeVisible();
+    await expect(page.locator('[data-action="capture-element"]')).toBeVisible();
     await expect(page.locator('[data-action="ocr-area"]')).toBeVisible();
 
     // Delay presets.
@@ -16,11 +17,13 @@ test.describe("Popup UI", () => {
     await expect(page.locator('[data-delay="5"]')).toBeVisible();
     await expect(page.locator('[data-delay="10"]')).toBeVisible();
 
-    // Recording controls — camera, mic, and system audio are independently optional.
+    // Recording controls — camera, mic, system audio, and quality are independently optional.
     await expect(page.locator("#rec-toggle")).toBeVisible();
     await expect(page.locator("#rec-cam")).toBeVisible();
     await expect(page.locator("#rec-mic")).toBeVisible();
     await expect(page.locator("#rec-audio")).toBeVisible();
+    await expect(page.locator("#rec-quality")).toBeVisible();
+    await expect(page.locator("#rec-blur")).toBeVisible();
     await expect(page.locator("#rec-label")).toHaveText("Start recording");
   });
 

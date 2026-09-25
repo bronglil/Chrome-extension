@@ -17,7 +17,7 @@
         </div>
       </div>
       <div class="live-pill" id="live-chip" hidden>
-        <span class="live-pill__dot"></span>
+        <span class="live-pill__dot" id="live-dot"></span>
         <span id="rec-clock">00:00</span>
       </div>
     </header>
@@ -28,14 +28,46 @@
         <div class="preview__empty" id="screen-empty">
           <div class="preview__orb" aria-hidden="true"></div>
           <h1 class="preview__title">Capture anything</h1>
-          <p class="preview__sub">Start with a 3-second countdown. Share your screen anytime — during or before recording.</p>
+          <p class="preview__sub">3-second countdown, then you’re live. Share your screen anytime. Pause, mute, or discard like Loom.</p>
         </div>
         <section class="pip" id="person-panel" hidden>
           <video id="cam-preview" autoplay muted playsinline></video>
           <span class="pip__tag">You</span>
         </section>
+        <canvas class="ink-overlay" id="ink-overlay" aria-hidden="true"></canvas>
+        <div class="ink-hit" id="ink-hit" hidden></div>
+        <div class="paused-banner" id="paused-banner" hidden>Paused</div>
       </div>
     </main>
+
+    <div class="annotate" id="annotate-dock" hidden>
+      <div class="annotate__tools" role="toolbar" aria-label="Annotation tools">
+        <button class="annotate__tool" id="ink-pen" type="button" data-tool="pen" title="Pen">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19 19 5l-3-1-7 14 1 3z"/><path d="m15 6 3 1"/></svg>
+          Pen
+        </button>
+        <button class="annotate__tool" id="ink-marker" type="button" data-tool="marker" title="Marker">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="m14 4 6 6-10 10H4v-6z"/></svg>
+          Marker
+        </button>
+        <button class="annotate__tool" id="ink-eraser" type="button" data-tool="eraser" title="Eraser">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4-4 10-10 4 4L7 21z"/><path d="M14 7l3 3"/></svg>
+          Eraser
+        </button>
+      </div>
+      <div class="annotate__colors" id="ink-colors" role="group" aria-label="Ink color">
+        <button class="annotate__swatch is-active" type="button" data-color="#ef4444" style="--sw:#ef4444" title="Red"></button>
+        <button class="annotate__swatch" type="button" data-color="#fbbf24" style="--sw:#fbbf24" title="Yellow"></button>
+        <button class="annotate__swatch" type="button" data-color="#34d399" style="--sw:#34d399" title="Green"></button>
+        <button class="annotate__swatch" type="button" data-color="#60a5fa" style="--sw:#60a5fa" title="Blue"></button>
+        <button class="annotate__swatch" type="button" data-color="#ffffff" style="--sw:#ffffff" title="White"></button>
+        <button class="annotate__swatch" type="button" data-color="#111827" style="--sw:#111827" title="Black"></button>
+      </div>
+      <div class="annotate__actions">
+        <button class="btn btn--ghost btn--compact" id="ink-clear" type="button">Clear all</button>
+        <button class="btn btn--ghost btn--compact" id="ink-done" type="button">Done</button>
+      </div>
+    </div>
 
     <footer class="controls" id="controls">
       <div class="chips" id="flags"></div>
@@ -45,9 +77,7 @@
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
           <span id="share-label">Share screen</span>
         </button>
-        <button class="btn btn--ghost" id="btn-unshare" type="button" hidden>
-          Remove screen
-        </button>
+        <button class="btn btn--ghost" id="btn-unshare" type="button" hidden>Remove screen</button>
         <button class="btn btn--primary" id="btn-start" type="button">
           <span class="btn__rec"></span>
           Start recording
@@ -55,17 +85,41 @@
       </div>
 
       <div class="actions actions--live" id="actions-live" hidden>
-        <button class="btn btn--ghost" id="btn-share-live" type="button">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+        <button class="icon-btn" id="btn-pause" type="button" title="Pause / resume">
+          <svg class="ico-pause" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+          <svg class="ico-play" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" hidden><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-mic" type="button" title="Mute microphone" hidden>
+          <svg class="ico-mic-on" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          <svg class="ico-mic-off" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M9 9v2a3 3 0 0 0 5.1 2.1M15 9V6a3 3 0 0 0-5.8-1"/><path d="M5 11a7 7 0 0 0 11.3 5.3M12 18v3M3 3l18 18"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-cam" type="button" title="Toggle camera" hidden>
+          <svg class="ico-cam-on" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 10 20 7v10l-5-3"/><rect x="3" y="7" width="12" height="10" rx="2"/></svg>
+          <svg class="ico-cam-off" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M15 10 20 7v10l-5-3"/><path d="M3 7h9a2 2 0 0 1 2 2v6"/><path d="M3 3l18 18"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-pip-pos" type="button" title="Move camera corner">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><rect x="13" y="11" width="6" height="5" rx="1"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-blur" type="button" title="Blur camera background" hidden>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.8 2.5 13.2 0 16M12 4c-2.5 2.8-2.5 13.2 0 16"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-annotate" type="button" title="Draw on recording">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19 19 5l-3-1-7 14 1 3z"/><path d="m15 6 3 1"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-cues" type="button" title="Show click & key cues">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7" stroke-dasharray="3 3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
+        </button>
+        <button class="btn btn--ghost btn--compact" id="btn-share-live" type="button">
           <span id="share-label-live">Share</span>
         </button>
+        <button class="btn btn--ghost btn--compact" id="btn-discard" type="button" title="Discard recording">Discard</button>
         <button class="btn btn--stop" id="btn-stop" type="button">
           <span class="btn__sq"></span>
-          Stop &amp; save
+          Save
         </button>
       </div>
 
-      <p class="footnote" id="person-off">Camera stays optional. Mic and system audio follow your popup choices.</p>
+      <p class="footnote" id="person-off">Camera, mic, and quality follow your popup choices. Ctrl/⌘+Shift+R starts or stops.</p>
     </footer>
   </div>
 
@@ -85,7 +139,25 @@
     <div class="saving__card">
       <div class="saving__spin" aria-hidden="true"></div>
       <p class="saving__title" id="saving-title">Saving your recording…</p>
-      <p class="saving__sub">This window closes automatically</p>
+      <p class="saving__sub" id="saving-sub">This window closes automatically</p>
+    </div>
+  </div>
+
+  <div class="trim" id="trim-panel" hidden>
+    <div class="trim__card">
+      <h2 class="trim__title">Trim recording</h2>
+      <p class="trim__sub">Drag the handles to cut the start or end, then save.</p>
+      <video class="trim__video" id="trim-video" playsinline controls></video>
+      <div class="trim__times" id="trim-times">0:00 – 0:00</div>
+      <div class="trim__range">
+        <label class="trim__label">Start <input type="range" id="trim-start" min="0" max="1000" value="0" step="1" /></label>
+        <label class="trim__label">End <input type="range" id="trim-end" min="0" max="1000" value="1000" step="1" /></label>
+      </div>
+      <div class="trim__actions">
+        <button class="btn btn--ghost btn--compact" id="trim-discard" type="button">Discard</button>
+        <button class="btn btn--ghost btn--compact" id="trim-full" type="button">Save full</button>
+        <button class="btn btn--primary btn--compact" id="trim-save" type="button">Save trimmed</button>
+      </div>
     </div>
   </div>
 
