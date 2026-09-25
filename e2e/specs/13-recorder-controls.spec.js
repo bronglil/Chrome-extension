@@ -509,4 +509,78 @@ test.describe("Popup recording prefs", () => {
     expect(trimmedDur).toBeLessThan(want * 1.6 + 0.4);
     expect(trimmedDur).toBeLessThan(fullDur * 0.7);
   });
+
+  test("popup persists Export as MP4 preference", async ({ context, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+    await page.locator("#rec-mp4").check();
+    await page.waitForTimeout(200);
+    const stored = await page.evaluate(async () => {
+      const { recPrefs } = await chrome.storage.local.get("recPrefs");
+      return recPrefs;
+    });
+    expect(stored.mp4).toBe(true);
+    await page.reload();
+    await expect(page.locator("#rec-mp4")).toBeChecked();
+    await page.locator("#rec-mp4").uncheck();
+    await page.waitForTimeout(200);
+  });
+
+  test("default WebM save never loads ffmpeg assets", async ({ context, extensionId }) => {
+    test.setTimeout(60_000);
+    const rec = await openStudio(context, extensionId, "cam=0&mic=0&audio=0&saveAs=0&fake=1&mp4=0");
+    await goLive(rec);
+    await rec.waitForTimeout(800);
+    const [download] = await Promise.all([
+      rec.waitForEvent("download", { timeout: 30_000 }),
+      rec.click("#btn-stop"),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/\.webm$/i);
+    const loaded = await rec.evaluate(() => ({
+      ffmpeg: !!window.__recorder.state.ffmpegLoaded,
+      scripts: [...document.querySelectorAll("script[data-ffmpeg-src]")].map((s) => s.src),
+      umd: !!window.FFmpegWASM,
+    }));
+    expect(loaded.ffmpeg).toBe(false);
+    expect(loaded.scripts).toEqual([]);
+    expect(loaded.umd).toBe(false);
+  });
+
+  test("mp4=1 Save downloads a playable MP4 via ffmpeg.wasm", async ({ context, extensionId }) => {
+    test.setTimeout(240_000);
+    const rec = await openStudio(context, extensionId, "cam=0&mic=0&audio=0&saveAs=0&fake=1&mp4=1");
+    await goLive(rec);
+    await rec.waitForTimeout(1200);
+    const [download] = await Promise.all([
+      rec.waitForEvent("download", { timeout: 180_000 }),
+      rec.click("#btn-stop"),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/\.mp4$/i);
+    const file = await download.path();
+    const buf = require("node:fs").readFileSync(file);
+    expect(buf.byteLength).toBeGreaterThan(500);
+    // ISO BMFF "ftyp" box near the start.
+    const head = buf.subarray(0, 64).toString("ascii");
+    expect(head.includes("ftyp")).toBe(true);
+
+    const probe = await rec.evaluate(async (bytes) => {
+      const blob = new Blob([new Uint8Array(bytes)], { type: "video/mp4" });
+      const url = URL.createObjectURL(blob);
+      const v = document.createElement("video");
+      v.muted = true;
+      v.preload = "metadata";
+      v.src = url;
+      const ok = await new Promise((res) => {
+        v.onloadedmetadata = () => res(true);
+        v.onerror = () => res(false);
+        setTimeout(() => res(Number.isFinite(v.duration)), 8000);
+      });
+      const dur = v.duration;
+      URL.revokeObjectURL(url);
+      return { ok, dur, ffmpeg: !!window.__recorder.state.ffmpegLoaded };
+    }, [...buf]);
+    expect(probe.ffmpeg).toBe(true);
+    expect(probe.ok).toBe(true);
+    expect(probe.dur).toBeGreaterThan(0.2);
+  });
 });

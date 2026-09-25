@@ -17,6 +17,8 @@ const opts = {
   pip: ["bl", "bc", "br"].includes(params.get("pip")) ? params.get("pip") : "bc",
   blur: params.get("blur") === "1",
   cues: params.get("cues") !== "0",
+  // Optional WebM→MP4 via lazy-loaded ffmpeg.wasm (#3). Off by default.
+  mp4: params.get("mp4") === "1",
 };
 
 const QUALITY = {
@@ -74,6 +76,8 @@ const state = {
   keyBadges: [],
   trimBlob: null,
   trimUrl: null,
+  exportMp4: null, // null = follow opts/params; boolean = trim-panel override
+  ffmpegLoaded: false,
 };
 
 function toast(msg, ms = 2400) {
@@ -1265,12 +1269,102 @@ function stop() {
   }
 }
 
-function showSaving(title) {
+function showSaving(title, sub) {
   const el = $("#saving");
   const t = $("#saving-title");
+  const s = $("#saving-sub");
   if (t && title) t.textContent = title;
+  if (s && sub != null) s.textContent = sub;
   if (el) el.hidden = false;
   document.body.classList.add("is-saving");
+}
+
+function wantMp4() {
+  // Trim-panel checkbox can override the session default.
+  if (state.exportMp4 === true) return true;
+  if (state.exportMp4 === false) return false;
+  if (params.get("mp4") === "1") return true;
+  if (params.get("mp4") === "0") return false;
+  return !!opts.mp4;
+}
+
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    const marker = `script[data-ffmpeg-src="${src}"]`;
+    if (document.querySelector(marker)) return resolve();
+    const s = document.createElement("script");
+    s.src = src;
+    s.dataset.ffmpegSrc = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Failed to load " + src));
+    document.head.appendChild(s);
+  });
+}
+
+let ffmpegPromise = null;
+
+/**
+ * Lazy-load vendored ffmpeg.wasm only when the user asked for MP4.
+ * Uses extension-URL classic worker (814.ffmpeg.js) — never blob workers.
+ */
+async function getFfmpeg(onProgress) {
+  if (!ffmpegPromise) {
+    ffmpegPromise = (async () => {
+      const base = chrome.runtime.getURL("vendor/ffmpeg/");
+      await loadScriptOnce(base + "ffmpeg.js");
+      const FFmpeg = globalThis.FFmpegWASM?.FFmpeg;
+      if (!FFmpeg) throw new Error("FFmpegWASM UMD did not expose FFmpeg");
+      const ff = new FFmpeg();
+      ff.on("progress", ({ progress }) => {
+        try { onProgress?.(Math.max(0, Math.min(100, Math.round((progress || 0) * 100)))); } catch (_) { /* ignore */ }
+      });
+      await ff.load({
+        coreURL: base + "ffmpeg-core.js",
+        wasmURL: base + "ffmpeg-core.wasm",
+      });
+      state.ffmpegLoaded = true;
+      return ff;
+    })().catch((err) => {
+      ffmpegPromise = null;
+      throw err;
+    });
+  }
+  return ffmpegPromise;
+}
+
+async function webmToMp4(blob, onProgress) {
+  const ff = await getFfmpeg(onProgress);
+  const inName = "input.webm";
+  const outName = "output.mp4";
+  await ff.writeFile(inName, new Uint8Array(await blob.arrayBuffer()));
+  const argsH264 = [
+    "-i", inName,
+    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart",
+    outName,
+  ];
+  const argsMpeg4 = [
+    "-i", inName,
+    "-c:v", "mpeg4", "-q:v", "7",
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart",
+    outName,
+  ];
+  try {
+    await ff.exec(argsH264);
+  } catch (err) {
+    console.warn("[SnapShot] libx264 failed, trying mpeg4", err);
+    try { await ff.deleteFile(outName); } catch (_) { /* ignore */ }
+    await ff.exec(argsMpeg4);
+  }
+  const data = await ff.readFile(outName);
+  try { await ff.deleteFile(inName); } catch (_) { /* ignore */ }
+  try { await ff.deleteFile(outName); } catch (_) { /* ignore */ }
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (!bytes.byteLength) throw new Error("MP4 convert produced an empty file");
+  return new Blob([bytes], { type: "video/mp4" });
 }
 
 function waitForDownload(id) {
@@ -1515,12 +1609,30 @@ function trimWebmBlob(blob, startSec, endSec) {
 }
 
 async function downloadRecordingBlob(blob) {
-  const url = URL.createObjectURL(blob);
+  let out = blob;
+  let ext = "webm";
+  if (wantMp4()) {
+    showSaving("Converting to MP4…", "Stays on your device — nothing is uploaded");
+    setStatus("Converting…");
+    try {
+      out = await webmToMp4(blob, (pct) => {
+        showSaving(`Converting to MP4… ${pct}%`, "Stays on your device — nothing is uploaded");
+      });
+      ext = "mp4";
+    } catch (err) {
+      console.warn("[SnapShot] mp4", err);
+      toast((err && err.message) || "MP4 convert failed — saving WebM instead");
+      out = blob;
+      ext = "webm";
+    }
+  }
+  showSaving(ext === "mp4" ? "Saving MP4…" : "Saving your recording…", "This window closes automatically");
+  const url = URL.createObjectURL(out);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   try {
     const downloadId = await chrome.downloads.download({
       url,
-      filename: `SnapShot-recording-${stamp}.webm`,
+      filename: `SnapShot-recording-${stamp}.${ext}`,
       saveAs: params.get("saveAs") !== "0",
     });
     await waitForDownload(downloadId);
@@ -1575,6 +1687,11 @@ function openTrimReview(blob) {
   state.trimUrl = URL.createObjectURL(blob);
   const video = $("#trim-video");
   const panel = $("#trim-panel");
+  const mp4Box = $("#trim-mp4");
+  if (mp4Box) {
+    mp4Box.checked = wantMp4();
+    state.exportMp4 = mp4Box.checked;
+  }
   $("#saving").hidden = true;
   document.body.classList.remove("is-saving");
   document.body.classList.add("is-trimming");
@@ -1626,6 +1743,13 @@ async function finalize() {
 
 $("#trim-start")?.addEventListener("input", syncTrimLabels);
 $("#trim-end")?.addEventListener("input", syncTrimLabels);
+$("#trim-mp4")?.addEventListener("change", (e) => {
+  state.exportMp4 = !!e.target.checked;
+});
+function syncExportMp4FromTrimUi() {
+  const box = $("#trim-mp4");
+  if (box) state.exportMp4 = !!box.checked;
+}
 $("#trim-discard")?.addEventListener("click", () => {
   closeTrimPanel();
   showSaving("Discarded — closing…");
@@ -1635,6 +1759,7 @@ $("#trim-discard")?.addEventListener("click", () => {
 $("#trim-full")?.addEventListener("click", async () => {
   const blob = state.trimBlob;
   if (!blob) return;
+  syncExportMp4FromTrimUi();
   closeTrimPanel();
   showSaving("Saving your recording…");
   await downloadRecordingBlob(blob);
@@ -1642,6 +1767,7 @@ $("#trim-full")?.addEventListener("click", async () => {
 $("#trim-save")?.addEventListener("click", async () => {
   const blob = state.trimBlob;
   if (!blob) return;
+  syncExportMp4FromTrimUi();
   const { start, end, duration } = getTrimRange();
   if (!Number.isFinite(duration) || duration <= 0) {
     toast("Recording length unknown — saving full file");
@@ -1819,6 +1945,8 @@ window.__recorder = {
   openTrimReview,
   getTrimRange,
   shouldSkipTrimUi,
+  wantMp4,
+  webmToMp4,
   /** Inject a stroke in compositor space (e2e). */
   _addInkStroke(stroke) {
     state.inkStrokes.push(stroke);

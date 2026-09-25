@@ -32,7 +32,7 @@ all PDF work use libraries vendored under `vendor/`.
 - Delayed shot: 3 / 5 / 10 s.
 
 **Record**
-- Screen recording → WebM, with optional microphone and tab/system audio.
+- Screen recording → WebM (optional on-device MP4 via ffmpeg.wasm), with optional microphone and tab/system audio.
 - Start/stop from the popup or a keyboard shortcut; a red badge shows while live.
 
 **Share this page**
@@ -113,7 +113,7 @@ single-threaded OCR, and rAF-coalesced editor redraws.
 `captureVisibleTab` rate limit (~2/s) is spaced between full-page slices;
 fixed/sticky headers are hidden after the first slice; lazy images get a pause
 per scroll step; full-page height is capped under the ~32,767 px canvas limit;
-recording output is WebM (MP4 would need ffmpeg.wasm); DRM content can't be
+recording output is WebM by default (optional MP4 uses vendored ffmpeg.wasm); DRM content can't be
 captured.
 
 ---

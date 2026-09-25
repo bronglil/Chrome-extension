@@ -154,6 +154,10 @@
         <label class="trim__label">End <input type="range" id="trim-end" min="0" max="1000" value="1000" step="1" /></label>
       </div>
       <div class="trim__actions">
+        <label class="trim__mp4" title="Re-encode to MP4 with on-device ffmpeg (larger first-run load)">
+          <input type="checkbox" id="trim-mp4" />
+          <span>Export as MP4</span>
+        </label>
         <button class="btn btn--ghost btn--compact" id="trim-discard" type="button">Discard</button>
         <button class="btn btn--ghost btn--compact" id="trim-full" type="button">Save full</button>
         <button class="btn btn--primary btn--compact" id="trim-save" type="button">Save trimmed</button>

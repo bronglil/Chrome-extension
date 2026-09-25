@@ -21,7 +21,7 @@ Loads the **real unpacked extension** into Chromium and drives it:
 | `06-pdf` | Open, page nav, pen, highlighter, signature, signed-PDF export |
 | `07-theme` | Popup/editor/PDF follow the system light/dark scheme |
 | `08-page-qr` | Page-URL QR: render, copy, and an encode→decode round-trip |
-| `09-performance` | A per-tool timing budget for every major feature |
+| `13-recorder-controls` | Loom controls, cues, trim, optional MP4 lazy-load |
 
 ## Running
 

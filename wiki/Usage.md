@@ -11,8 +11,23 @@
 - **Delayed shot** — 3 / 5 / 10 s, then capture.
 
 ## Record
-Screen recording to **WebM**, with optional microphone and tab/system audio.
-Start/stop from the popup or a keyboard shortcut; a red badge shows while live.
+Screen recording to **WebM** by default, with optional microphone and tab/system
+audio. Start/stop from the popup or a keyboard shortcut; a red badge shows while
+live. After stop you can trim start/end, then save.
+
+### MP4 export
+Optional. Enable **Export as MP4** in the popup (persisted as `recPrefs.mp4`) or
+tick the same checkbox on the trim review card. Saving then:
+
+1. Keeps the WebM path until convert starts (ffmpeg assets stay unloaded if you
+   never opt in).
+2. Lazy-loads `vendor/ffmpeg/` (~30 MB wasm, offline, once per session).
+3. Shows a progress overlay, then downloads `.mp4`.
+4. Falls back to WebM with a toast if convert fails.
+
+Manual checklist: record ~3s → enable MP4 → Save → open the file in QuickTime /
+VLC; confirm audio (if mic was on) and that a second save without MP4 never
+hits the Network panel for `ffmpeg-core.wasm`.
 
 ## Editor (opens in a tab)
 - **Crop** and annotate: arrow, rectangle, oval, freehand, highlighter, text,
