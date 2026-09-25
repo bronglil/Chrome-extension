@@ -15,8 +15,10 @@ to greatly improve small/faint/low-contrast text, but accuracy still depends on
 how legible the source is.
 
 **Why WebM recordings and not MP4?**
-`MediaRecorder` outputs WebM natively. MP4 needs `ffmpeg.wasm` transcoding —
-tracked as an optional roadmap item.
+`MediaRecorder` outputs WebM natively. Optional **Export as MP4** (popup toggle
+or trim-panel checkbox) lazy-loads vendored `ffmpeg.wasm` (~30 MB) and
+transcodes on-device. Skipping MP4 never loads those assets. See
+[Usage — MP4 export](Usage#mp4-export).
 
 **Can it capture Netflix/DRM content?**
 No — DRM-protected content can't be captured (a browser restriction).

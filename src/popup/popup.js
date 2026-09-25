@@ -105,6 +105,7 @@ document.querySelectorAll("[data-action]").forEach((btn) => {
         pip: "bc",
         blur: !!$("#rec-blur")?.checked,
         cues: $("#rec-cues") ? !!$("#rec-cues").checked : true,
+        mp4: !!$("#rec-mp4")?.checked,
       };
       persistRecPrefs(opts);
       const cur = await send({ type: "GET_RECORDING_STATE" }).catch(() => null);
@@ -276,6 +277,7 @@ function persistRecPrefs(opts) {
     if (typeof stored.systemAudio === "boolean") $("#rec-audio").checked = stored.systemAudio;
     if (typeof stored.blur === "boolean" && $("#rec-blur")) $("#rec-blur").checked = stored.blur;
     if (typeof stored.cues === "boolean" && $("#rec-cues")) $("#rec-cues").checked = stored.cues;
+    if (typeof stored.mp4 === "boolean" && $("#rec-mp4")) $("#rec-mp4").checked = stored.mp4;
     if (stored.quality && $("#rec-quality")) $("#rec-quality").value = stored.quality;
   } catch (_) { /* first run */ }
 })();
@@ -289,6 +291,7 @@ function currentRecPrefs() {
     pip: "bc",
     blur: !!$("#rec-blur")?.checked,
     cues: $("#rec-cues") ? !!$("#rec-cues").checked : true,
+    mp4: !!$("#rec-mp4")?.checked,
   };
 }
 
@@ -299,6 +302,9 @@ $("#rec-blur")?.addEventListener("change", () => {
   persistRecPrefs(currentRecPrefs());
 });
 $("#rec-cues")?.addEventListener("change", () => {
+  persistRecPrefs(currentRecPrefs());
+});
+$("#rec-mp4")?.addEventListener("change", () => {
   persistRecPrefs(currentRecPrefs());
 });
 $("#rec-cam")?.addEventListener("change", () => persistRecPrefs(currentRecPrefs()));
