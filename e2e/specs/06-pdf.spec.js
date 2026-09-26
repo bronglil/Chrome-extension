@@ -462,6 +462,121 @@ test.describe("PDF editor", () => {
     expect(bytes.slice(0, 5).toString()).toBe("%PDF-");
   });
 
+  test("crops the page and shrinks stage; export burns cropped page", async ({ context, extensionId }) => {
+    test.setTimeout(60_000);
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+    await page.click('#pe-rotate-scope [data-rotate-scope="page"]');
+
+    const before = await page.evaluate(() => {
+      const s = window.__pdfEditor.state.pageSizes[1];
+      return { w: s.w, h: s.h };
+    });
+
+    // Keep roughly the center half of the page.
+    const x0 = Math.round(before.w * 0.2);
+    const y0 = Math.round(before.h * 0.2);
+    const x1 = Math.round(before.w * 0.8);
+    const y1 = Math.round(before.h * 0.8);
+    await dragOnStage(page, "crop", [
+      [x0, y0],
+      [x1, y1],
+    ]);
+    expect(await overlayCount(page, ".crop-marquee-final")).toBe(1);
+
+    await page.click("#pe-crop-apply");
+    await expect.poll(async () => page.evaluate(() => {
+      const s = window.__pdfEditor.state;
+      const c = window.__pdfEditor.pageCrop(1);
+      return !!(c && s.stage && s.pageSizes[1]?.w);
+    }), { timeout: 15_000 }).toBe(true);
+
+    const after = await page.evaluate(() => {
+      const s = window.__pdfEditor.state;
+      const size = s.pageSizes[1];
+      const stage = s.stage;
+      return {
+        w: size.w,
+        h: size.h,
+        stageW: stage?.width(),
+        stageH: stage?.height(),
+        crop: window.__pdfEditor.pageCrop(1),
+        needsBurn: window.__pdfEditor.pageNeedsBurn(1),
+      };
+    });
+    expect(after.needsBurn).toBe(true);
+    expect(after.crop.nw).toBeLessThan(0.75);
+    expect(after.crop.nh).toBeLessThan(0.75);
+    expect(after.w).toBeLessThan(before.w * 0.85);
+    expect(after.h).toBeLessThan(before.h * 0.85);
+    expect(after.stageW).toBe(after.w);
+    expect(after.stageH).toBe(after.h);
+    expect(await overlayCount(page, ".crop-marquee-final")).toBe(0);
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download", { timeout: 45_000 }),
+      page.click("#pe-save"),
+    ]);
+    const out = fs.readFileSync(await download.path());
+    expect(out.slice(0, 5).toString()).toBe("%PDF-");
+
+    const exported = await page.evaluate(async (bytes) => {
+      const data = new Uint8Array(bytes);
+      const pdf = await window.pdfjsLib.getDocument({ data }).promise;
+      const p = await pdf.getPage(1);
+      const vp = p.getViewport({ scale: 1 });
+      const tc = await p.getTextContent();
+      return {
+        w: vp.width,
+        h: vp.height,
+        text: tc.items.map((i) => i.str).join(""),
+      };
+    }, [...out]);
+    // Burned page: no recoverable text layer; geometry is the crop (smaller).
+    expect(exported.text.trim().length).toBe(0);
+    expect(exported.w * exported.h).toBeLessThan(before.w * before.h);
+  });
+
+  test("deskew tilts the page preview and burns on export", async ({ context, extensionId }) => {
+    test.setTimeout(60_000);
+    const page = await openPdfEditor(context, extensionId);
+    await loadSample(page);
+    await page.click('#pe-rotate-scope [data-rotate-scope="page"]');
+
+    const before = await page.evaluate(() => {
+      const s = window.__pdfEditor.state.pageSizes[1];
+      return { w: s.w, h: s.h };
+    });
+
+    await page.locator("#pe-deskew").fill("5");
+    await expect(page.locator("#pe-deskew-val")).toHaveText("5°");
+    await page.click("#pe-deskew-apply");
+
+    await expect.poll(async () => page.evaluate(() => window.__pdfEditor.pageDeskew(1)), {
+      timeout: 15_000,
+    }).toBe(5);
+
+    const after = await page.evaluate(() => {
+      const s = window.__pdfEditor.state.pageSizes[1];
+      return {
+        w: s.w,
+        h: s.h,
+        needsBurn: window.__pdfEditor.pageNeedsBurn(1),
+      };
+    });
+    expect(after.needsBurn).toBe(true);
+    // Deskew expands the bounding box slightly.
+    expect(after.w * after.h).toBeGreaterThan(before.w * before.h);
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download", { timeout: 45_000 }),
+      page.click("#pe-save"),
+    ]);
+    const out = fs.readFileSync(await download.path());
+    expect(out.slice(0, 5).toString()).toBe("%PDF-");
+    expect(out.length).toBeGreaterThan(500);
+  });
+
   test("redact burns page so SECRET string is gone from exported PDF", async ({ context, extensionId }) => {
     test.setTimeout(60_000);
     const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");

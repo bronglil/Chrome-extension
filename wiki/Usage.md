@@ -50,8 +50,14 @@ hits the Network panel for `ffmpeg-core.wasm`.
 1. Open a PDF (button or drag-and-drop) and navigate pages.
 2. **Signature** — draw, type, or upload; drag it onto the line and resize.
 3. **Pen** and **highlighter** to mark up while reading; add text or a date.
-4. **Save** — annotations overlay the original pages (text preserved), exported
-   as `<name>-signed.pdf`.
+4. **Rotate** — Left / Right (±90°), scoped to **This page** or **All pages**.
+5. **Crop** — select the Crop tool, drag a region, then **Apply crop**. Margins
+   outside the region are discarded on Save (page is re-rasterized).
+6. **Deskew** — use the inspector slider (−15°…+15°) and **Apply deskew** to
+   straighten tilted scans. Same This page / All pages scope as rotate/crop.
+7. **Save** — ink overlays keep original text where possible; crop, deskew, and
+   redact burn the page to an image so underlying content cannot be recovered.
+   Exported as `<name>-signed.pdf`.
 
 ## Share this page
 The popup shows a live **QR of the current tab's URL** — copy the link, copy or
