@@ -41,6 +41,9 @@ hits the Network panel for `ffmpeg-core.wasm`.
   (upscale, grayscale, contrast stretch, Otsu binarize) so small/faint text
   reads far better. No OCR engine is 100% accurate — quality depends on the
   source legibility.
+- **Searchable PDF** — check **Searchable** next to PDF export to embed an
+  invisible OCR text layer (Select / Find). Off by default; OCR assets load
+  only when checked. Redact sensitive regions before exporting if you use it.
 - **QR/barcode** decodes via the native `BarcodeDetector`, falling back to jsQR.
 
 ## PDF editor & signing

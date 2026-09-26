@@ -15,7 +15,7 @@ Loads the **real unpacked extension** into Chromium and drives it:
 | `00-smoke` | Extension loads, service worker registers |
 | `01-popup` | Capture buttons + recording controls |
 | `02-editor-annotate` | Konva tools, undo, gradient/padding |
-| `03-export` | PNG / JPEG / clipboard / multi-page PDF |
+| `03-export` | PNG / JPEG / clipboard / multi-page PDF; searchable OCR PDF |
 | `04-capture` | `captureVisibleTab`, full-page stitch, area select |
 | `05-ocr-qr` | Offline OCR (incl. a hard low-contrast case) + QR decode |
 | `06-pdf` | Open, page nav, pen, highlighter, signature, signed-PDF export |

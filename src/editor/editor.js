@@ -890,36 +890,136 @@ $("#btn-jpg").addEventListener("click", () => {
   downloadDataUrl(flatten("image/jpeg", 0.92), `${fileBase()}.jpg`);
 });
 
-$("#btn-pdf").addEventListener("click", () => {
-  if (!state.stage) return toast("Load an image first");
-  const dataUrl = flatten("image/png", 0.92, DEVICE.maxPixelRatio || 1);
-  const img = new Image();
-  img.onload = () => {
-    const { jsPDF } = jspdf;
-    const w = img.width, h = img.height;
-    const orientation = w > h ? "landscape" : "portrait";
-    const pdf = new jsPDF({ orientation, unit: "px", format: [w, Math.min(h, w * 1.414)] });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    // Split very tall images across multiple pages.
-    const sliceH = Math.floor((pageW / w) ? pageH * (w / pageW) : pageH);
-    let y = 0, first = true;
-    const scale = pageW / w;
-    const pageSrcH = pageH / scale;
-    while (y < h) {
-      if (!first) pdf.addPage([pageW, pageH], orientation);
-      const c = document.createElement("canvas");
-      c.width = w;
-      c.height = Math.min(pageSrcH, h - y);
-      c.getContext("2d").drawImage(img, 0, y, w, c.height, 0, 0, w, c.height);
-      pdf.addImage(c.toDataURL("image/png"), "PNG", 0, 0, pageW, c.height * scale);
-      y += pageSrcH;
-      first = false;
+function loadImageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Could not load export image"));
+    img.src = url;
+  });
+}
+
+/**
+ * Run OCR on an export-sized bitmap and return words in that bitmap's
+ * coordinate space (already divided by preprocess scale).
+ */
+async function ocrWordsForImage(img) {
+  const src = document.createElement("canvas");
+  src.width = img.width;
+  src.height = img.height;
+  src.getContext("2d").drawImage(img, 0, 0);
+  const worker = await getOcrWorker();
+  showProgress("Enhancing for searchable PDF…", 0.12);
+  const canvas = preprocessForOcr(src);
+  const scale = ocrScale || 1;
+  showProgress("OCR for searchable PDF…", 0.2);
+  const { data } = await worker.recognize(canvas);
+  const words = [];
+  for (const w of data.words || []) {
+    const text = (w.text || "").trim();
+    if (!text || (w.confidence ?? 0) < 35) continue;
+    const b = w.bbox || {};
+    const x0 = (b.x0 || 0) / scale;
+    const y0 = (b.y0 || 0) / scale;
+    const x1 = (b.x1 || 0) / scale;
+    const y1 = (b.y1 || 0) / scale;
+    if (!(x1 > x0) || !(y1 > y0)) continue;
+    words.push({ text, x0, y0, x1, y1 });
+  }
+  return words;
+}
+
+/** Embed invisible selectable text for one PDF page slice. */
+function addInvisibleTextLayer(pdf, words, sliceY, sliceH, imgW, pageW, pageH) {
+  if (!words?.length) return;
+  const scale = pageW / imgW;
+  pdf.setTextColor(0, 0, 0);
+  for (const w of words) {
+    // Word must overlap this vertical slice of the source image.
+    if (w.y1 <= sliceY || w.y0 >= sliceY + sliceH) continue;
+    const x = w.x0 * scale;
+    const yTop = (w.y0 - sliceY) * scale;
+    const boxH = Math.max(4, (w.y1 - w.y0) * scale);
+    // jsPDF default origin is top-left; baseline ≈ bottom of OCR box.
+    const y = Math.min(pageH - 1, yTop + boxH);
+    const fontSize = Math.max(4, Math.min(72, boxH * 0.92));
+    try {
+      pdf.setFontSize(fontSize);
+      pdf.text(w.text, x, y, {
+        baseline: "bottom",
+        renderingMode: "invisible",
+      });
+    } catch (_) {
+      // Skip glyphs the standard font can't encode.
     }
-    pdf.save(`${fileBase()}.pdf`);
-    void sliceH;
-  };
-  img.src = dataUrl;
+  }
+}
+
+async function exportPdf() {
+  if (!state.stage) return toast("Load an image first");
+  const searchable = !!$("#opt-pdf-ocr")?.checked;
+  const dataUrl = flatten("image/png", 0.92, DEVICE.maxPixelRatio || 1);
+  let img;
+  try {
+    img = await loadImageFromUrl(dataUrl);
+  } catch (err) {
+    return toast(err.message || "Export failed");
+  }
+
+  let words = [];
+  if (searchable) {
+    try {
+      showProgress("Loading OCR…", 0.05);
+      words = await ocrWordsForImage(img);
+      hideProgress();
+      if (!words.length) toast("OCR found no text — saving image PDF");
+    } catch (err) {
+      hideProgress();
+      console.warn("[SnapShot] searchable PDF OCR", err);
+      toast("OCR failed — saving image PDF");
+      words = [];
+    }
+  }
+
+  const { jsPDF } = jspdf;
+  const w = img.width;
+  const h = img.height;
+  const orientation = w > h ? "landscape" : "portrait";
+  const pdf = new jsPDF({ orientation, unit: "px", format: [w, Math.min(h, w * 1.414)] });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const scale = pageW / w;
+  const pageSrcH = pageH / scale;
+  let y = 0;
+  let first = true;
+  let pageIndex = 0;
+  const totalPages = Math.max(1, Math.ceil(h / pageSrcH));
+  while (y < h) {
+    if (!first) pdf.addPage([pageW, pageH], orientation);
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = Math.min(pageSrcH, h - y);
+    c.getContext("2d").drawImage(img, 0, y, w, c.height, 0, 0, w, c.height);
+    pdf.addImage(c.toDataURL("image/png"), "PNG", 0, 0, pageW, c.height * scale);
+    if (words.length) {
+      if (totalPages > 1) {
+        showProgress(`Embedding text… page ${pageIndex + 1}/${totalPages}`, (pageIndex + 1) / totalPages);
+      }
+      addInvisibleTextLayer(pdf, words, y, c.height, w, pageW, pageH);
+    }
+    y += pageSrcH;
+    first = false;
+    pageIndex += 1;
+  }
+  hideProgress();
+  pdf.save(`${fileBase()}.pdf`);
+}
+
+$("#btn-pdf").addEventListener("click", () => {
+  exportPdf().catch((err) => {
+    hideProgress();
+    toast("PDF export failed: " + (err.message || err));
+  });
 });
 
 $("#src-png")?.addEventListener("click", () => $("#btn-png").click());
@@ -1170,6 +1270,8 @@ window.__editor = {
   applyBlur,
   flatten,
   getBaseCanvas,
+  exportPdf,
+  getOcrWorkerLoaded: () => !!ocrWorker,
 };
 
 // ---------------------------------------------------------------------------

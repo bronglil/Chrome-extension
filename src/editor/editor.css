@@ -66,6 +66,13 @@ button { font-family: inherit; }
 .act__dl::before { content: ""; position: absolute; left: 5px; top: 0; width: 3px; height: 8px; background: currentColor; border-radius: 1px; }
 .act__dl::after { content: ""; position: absolute; left: 2px; top: 6px; width: 9px; height: 4px; border: 2px solid currentColor; border-top: none; border-radius: 0 0 3px 3px; }
 .act-sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+.act-check {
+  display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 8px;
+  color: var(--ink-soft); font-size: 12px; font-weight: 550; cursor: pointer;
+  user-select: none; border-radius: var(--r-sm);
+}
+.act-check:hover { background: var(--surface-2); color: var(--ink); }
+.act-check input { accent-color: var(--accent); margin: 0; }
 
 /* Stage region */
 .stage-region { flex: 1; display: flex; min-height: 0; position: relative; }
