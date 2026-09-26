@@ -18,7 +18,7 @@ Loads the **real unpacked extension** into Chromium and drives it:
 | `03-export` | PNG / JPEG / clipboard / multi-page PDF; searchable OCR PDF |
 | `04-capture` | `captureVisibleTab`, full-page stitch, area select |
 | `05-ocr-qr` | Offline OCR (incl. a hard low-contrast case) + QR decode |
-| `06-pdf` | Open, page nav, pen, highlighter, signature, signed-PDF export |
+| `06-pdf` | Open, nav, annotate, rotate/crop/deskew, Extract text OCR, burn export |
 | `07-theme` | Popup/editor/PDF follow the system light/dark scheme |
 | `08-page-qr` | Page-URL QR: render, copy, and an encode→decode round-trip |
 | `13-recorder-controls` | Loom controls, cues, trim, optional MP4 lazy-load |

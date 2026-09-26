@@ -577,6 +577,41 @@ test.describe("PDF editor", () => {
     expect(out.length).toBeGreaterThan(500);
   });
 
+  test("Extract text OCRs the current page and shows the result", async ({ context, extensionId }) => {
+    test.setTimeout(120_000);
+    const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.HelveticaBold);
+    const p = doc.addPage([520, 200]);
+    p.drawText("HELLO OCR 12345", {
+      x: 36, y: 90, size: 36, font, color: rgb(0, 0, 0),
+    });
+    const pdfBytes = await doc.save();
+    const tmp = path.join(__dirname, "..", "assets", "_tmp-ocr-page.pdf");
+    fs.writeFileSync(tmp, pdfBytes);
+
+    const page = await openPdfEditor(context, extensionId);
+    await page.setInputFiles("#pe-open", tmp);
+    await expect(page.locator("#pe-pageinfo")).toHaveText("1 / 1", { timeout: 30_000 });
+    await page.waitForFunction(() => window.__pdfEditor.state.stage);
+    await expect(page.locator("#pe-ocr")).toBeEnabled();
+
+    // Worker should not load until Extract text is clicked.
+    expect(await page.evaluate(() => window.__pdfEditor.getOcrWorkerLoaded())).toBe(false);
+
+    await page.click("#pe-ocr");
+    await expect(page.locator("#pe-ocr-panel")).toBeVisible({ timeout: 100_000 });
+    await expect.poll(
+      async () => (await page.inputValue("#pe-ocr-text")).toUpperCase(),
+      { timeout: 100_000 },
+    ).toMatch(/HELLO/);
+    const text = (await page.inputValue("#pe-ocr-text")).toUpperCase();
+    expect(text).toMatch(/OCR/);
+    expect(await page.evaluate(() => window.__pdfEditor.getOcrWorkerLoaded())).toBe(true);
+
+    try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ }
+  });
+
   test("redact burns page so SECRET string is gone from exported PDF", async ({ context, extensionId }) => {
     test.setTimeout(60_000);
     const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
