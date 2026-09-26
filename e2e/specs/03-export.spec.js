@@ -59,9 +59,11 @@ test.describe("Editor — export", () => {
 
   test("Searchable PDF embeds OCR text that Find can read", async ({ context, extensionId }) => {
     test.setTimeout(180_000);
-    const marker = "SEARCHABLE42";
+    // Use the same high-contrast phrase as 05-ocr-qr — exact digit strings are
+    // flaky under Tesseract on CI (e.g. "42" → "A42"). Assert word stems.
     const id = await seedCapture(context, await makeImageDataUrl(context, {
-      w: 640, h: 220, bg: "#ffffff", textColor: "#000000", text: `Invoice ${marker}`,
+      w: 720, h: 240, bg: "#ffffff", textColor: "#000000", font: 56, weight: "bold",
+      text: "HELLO OCR 12345",
     }));
     const page = await openEditor(context, extensionId, id);
     await page.locator("#opt-pdf-ocr").check();
@@ -95,7 +97,11 @@ test.describe("Editor — export", () => {
       return all;
     }, { bytes: [...buf], base: `chrome-extension://${extensionId}/` });
 
-    expect(text.toUpperCase()).toContain(marker);
+    const norm = text.toUpperCase().replace(/[^A-Z0-9]+/g, " ");
+    expect(norm).toMatch(/HELLO/);
+    expect(norm).toMatch(/OCR/);
+    // Digits may OCR-warp; require at least a few of the known sequence.
+    expect(norm.replace(/\s+/g, "")).toMatch(/123|234|345/);
     expect(await page.evaluate(() => window.__editor.getOcrWorkerLoaded())).toBe(true);
   });
 });
