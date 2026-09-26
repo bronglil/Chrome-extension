@@ -27,9 +27,18 @@
       <button class="act" id="btn-copy" title="Copy image to clipboard">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span>
       </button>
-      <button class="act" id="btn-png" title="Save PNG"><span class="act__dl"></span>PNG</button>
-      <button class="act" id="btn-jpg" title="Save JPEG"><span class="act__dl"></span>JPG</button>
-      <button class="act" id="btn-pdf" title="Save PDF"><span class="act__dl"></span>PDF</button>
+      <button class="act" id="btn-png" title="Save PNG">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 21h14"/></svg>
+        <span>PNG</span>
+      </button>
+      <button class="act" id="btn-jpg" title="Save JPEG">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 21h14"/></svg>
+        <span>JPG</span>
+      </button>
+      <button class="act" id="btn-pdf" title="Save PDF">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 21h14"/></svg>
+        <span>PDF</span>
+      </button>
       <label class="act-check" title="Run offline OCR and embed a selectable / searchable text layer in the PDF">
         <input type="checkbox" id="opt-pdf-ocr" />
         <span>Searchable</span>
@@ -119,9 +128,18 @@
         </div>
         <ul class="src__facts" id="src-facts"></ul>
         <div class="src__acts">
-          <button type="button" class="ibtn ibtn--primary" id="src-png">Download PNG</button>
-          <button type="button" class="ibtn" id="src-pdf">Download PDF</button>
-          <button type="button" class="ibtn" id="src-copy">Copy image</button>
+          <button type="button" class="ibtn ibtn--primary" id="src-png">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 21h14"/></svg>
+            Download PNG
+          </button>
+          <button type="button" class="ibtn" id="src-pdf">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 21h14"/></svg>
+            Download PDF
+          </button>
+          <button type="button" class="ibtn" id="src-copy">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy image
+          </button>
         </div>
       </section>
 

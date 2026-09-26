@@ -9,7 +9,7 @@ src/
   offscreen/  Media work: getUserMedia frame grabs + MediaRecorder
   content/    In-page area overlay + full-page scroll & stitch
   editor/     Konva editor: crop, annotate, OCR, QR, export
-  pdf/        PDF editor: open, sign, rotate/crop/deskew, pen/highlight, save (pdf.js + pdf-lib)
+  pdf/        PDF editor: open, sign, rotate/crop/deskew, OCR extract, pen/highlight, save
 vendor/       konva, jspdf, jsqr, tesseract, pdfjs, pdf-lib, qrcode (offline)
 ```
 

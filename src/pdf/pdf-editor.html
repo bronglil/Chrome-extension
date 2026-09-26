@@ -26,8 +26,12 @@
         <span>Open</span>
         <input type="file" id="pe-open" accept="application/pdf" hidden />
       </label>
+      <button class="btn btn--ghost" id="pe-ocr" disabled title="Extract text from the page with offline OCR">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2M9 19h6M12 5v14"/></svg>
+        <span>Extract text</span>
+      </button>
       <button class="btn btn--primary" id="pe-save" disabled title="Download the signed PDF">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 21h14"/></svg>
         <span>Save PDF</span>
       </button>
     </div>
@@ -127,6 +131,13 @@
         <p class="panel__hint">Crop and deskew use the same This page / All pages scope. They re-render the page on save.</p>
       </section>
 
+      <section class="panel" id="pe-ocr-panel" hidden>
+        <h3 class="panel__title">Extracted text</h3>
+        <textarea id="pe-ocr-text" class="field field--area" rows="10" placeholder="Recognized text…" readonly></textarea>
+        <button type="button" class="btn btn--ghost btn--sm" id="pe-ocr-copy" style="width:100%;margin-top:8px">Copy text</button>
+        <p class="panel__hint">Uses the same This page / All pages scope. OCR runs offline on the rendered page (good for scans).</p>
+      </section>
+
       <section class="panel">
         <h3 class="panel__title">Ink color</h3>
         <div class="swatches" id="pe-color-swatches">
@@ -223,6 +234,7 @@
   <script src="../../vendor/konva.min.js"></script>
   <script src="../../vendor/pdfjs/pdf.min.js"></script>
   <script src="../../vendor/pdf-lib.min.js"></script>
+  <script src="../../vendor/tesseract/tesseract.min.js"></script>
   <script src="../lib/utils.js"></script>
   <script src="pdf-editor.js"></script>
 </body>

@@ -143,6 +143,7 @@ async function openPdf(arrayBuffer, name) {
   chip.hidden = false;
   $("#pe-empty").hidden = true;
   $("#pe-save").disabled = false;
+  $("#pe-ocr").disabled = false;
   $("#pe-rotate-cw").disabled = false;
   $("#pe-rotate-ccw").disabled = false;
   syncGeometryUi();
@@ -542,6 +543,8 @@ function syncGeometryUi() {
   const deskew = $("#pe-deskew");
   const deskewApply = $("#pe-deskew-apply");
   const deskewVal = $("#pe-deskew-val");
+  const ocrBtn = $("#pe-ocr");
+  if (ocrBtn) ocrBtn.disabled = !has;
   if (cropBtn) cropBtn.disabled = !has || state.tool !== "crop";
   if (deskew) {
     deskew.disabled = !has;
@@ -1545,6 +1548,169 @@ function placeSignature(dataUrl) {
 }
 
 // ---------------------------------------------------------------------------
+// OCR — extract text from rendered page(s) (scanned / CamScanner-style PDFs)
+// ---------------------------------------------------------------------------
+let ocrWorker = null;
+async function getOcrWorker() {
+  if (ocrWorker) return ocrWorker;
+  if (typeof Tesseract === "undefined") {
+    throw new Error("OCR library not loaded");
+  }
+  const base = chrome.runtime.getURL("vendor/tesseract/");
+  ocrWorker = await Tesseract.createWorker("eng", 1, {
+    workerPath: base + "worker.min.js",
+    corePath: chrome.runtime.getURL("vendor/tesseract/"),
+    langPath: base + "lang",
+    gzip: true,
+    // Extension CSP blocks blob: workers — load the worker from the ext URL.
+    workerBlobURL: false,
+    logger: (m) => {
+      if (m.status === "recognizing text") progress("OCR…", 0.25 + 0.7 * (m.progress || 0));
+    },
+  });
+  await ocrWorker.setParameters({
+    tessedit_pageseg_mode: "3",
+    preserve_interword_spaces: "1",
+    tessedit_do_invert: "0",
+  });
+  return ocrWorker;
+}
+
+/** Upscale + Otsu binarize — same pipeline as the image editor. */
+function preprocessForOcr(src) {
+  const MIN_DIM = 1600;
+  const scale = Math.min(3, Math.max(1, MIN_DIM / Math.max(src.width, src.height)));
+  const w = Math.round(src.width * scale);
+  const h = Math.round(src.height * scale);
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, w, h);
+
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  const gray = new Uint8Array(w * h);
+  const hist = new Array(256).fill(0);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+    gray[p] = g;
+    hist[g]++;
+  }
+  const total = w * h;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, maxVar = -1, thresh = 127;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > maxVar) { maxVar = between; thresh = t; }
+  }
+  let dark = 0;
+  for (let p = 0; p < total; p++) if (gray[p] < thresh) dark++;
+  const invert = dark > total * 0.55;
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    let on = gray[p] < thresh;
+    if (invert) on = !on;
+    const v = on ? 0 : 255;
+    d[i] = d[i + 1] = d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+/** Raster of one page after rotation / deskew / crop (no annotation overlays). */
+async function pageCanvasForOcr(num) {
+  const view = state.views[num];
+  if (view?.pageCanvas && view.pageCanvas.width > 0) {
+    return view.pageCanvas;
+  }
+  const page = await state.pdfDoc.getPage(num);
+  const dpr = Math.max(2, rasterDpr());
+  const rotation = totalRotation(page, num);
+  const fit = pageDisplayScale(page, rotation);
+  const viewport = page.getViewport({ scale: fit * dpr, rotation });
+  let canvas = document.createElement("canvas");
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  const ctx = canvas.getContext("2d", { alpha: false });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport, intent: "display" }).promise;
+  return transformPageCanvas(canvas, num);
+}
+
+async function runPdfOcr() {
+  if (!state.pdfDoc) return toast("Open a PDF first");
+  const targets = await geometryTargets();
+  const btn = $("#pe-ocr");
+  if (btn) btn.disabled = true;
+  try {
+    progress("Loading OCR…", 0.05);
+    const worker = await getOcrWorker();
+    const chunks = [];
+    for (let i = 0; i < targets.length; i++) {
+      const num = targets[i];
+      progress(
+        targets.length > 1 ? `OCR page ${num} of ${state.numPages}…` : "Enhancing page…",
+        0.1 + 0.15 * (i / Math.max(1, targets.length)),
+      );
+      const src = await pageCanvasForOcr(num);
+      const canvas = preprocessForOcr(src);
+      progress(
+        targets.length > 1 ? `OCR page ${num}…` : "OCR…",
+        0.25 + 0.7 * (i / Math.max(1, targets.length)),
+      );
+      const { data } = await worker.recognize(canvas);
+      const text = (data.text || "").trim();
+      if (targets.length > 1) {
+        chunks.push(`--- Page ${num} ---\n${text || "(no text found)"}`);
+      } else {
+        chunks.push(text);
+      }
+    }
+    hideProgress();
+    const out = chunks.join("\n\n").trim();
+    const panel = $("#pe-ocr-panel");
+    const area = $("#pe-ocr-text");
+    if (panel) panel.hidden = false;
+    if (area) area.value = out;
+    if (out) {
+      await navigator.clipboard.writeText(out).catch(() => {});
+      toast(targets.length > 1 ? `OCR done — ${targets.length} pages` : "OCR done — text copied");
+    } else {
+      toast("OCR found no text");
+    }
+    return out;
+  } catch (err) {
+    hideProgress();
+    toast("OCR failed: " + (err.message || err));
+    console.error("[SnapShot] PDF OCR", err);
+    return null;
+  } finally {
+    if (btn) btn.disabled = !state.pdfDoc;
+  }
+}
+
+$("#pe-ocr")?.addEventListener("click", () => {
+  runPdfOcr().catch((err) => toast(err.message || "OCR failed"));
+});
+$("#pe-ocr-copy")?.addEventListener("click", () => {
+  const text = $("#pe-ocr-text")?.value || "";
+  if (!text) return toast("Nothing to copy");
+  navigator.clipboard.writeText(text).then(() => toast("Text copied")).catch(() => toast("Copy failed"));
+});
+
+// ---------------------------------------------------------------------------
 // Save: overlay each annotated page onto the ORIGINAL PDF via pdf-lib
 // ---------------------------------------------------------------------------
 $("#pe-save").addEventListener("click", exportPdf);
@@ -1787,5 +1953,5 @@ window.__pdfEditor = {
   pointer, clientFromStage, rotatePage, userRotation, totalRotation, rotateScope,
   pageHasRedact, flattenPageVisual, replacePageWithImage,
   pageCrop, pageDeskew, pageNeedsBurn, applyCropFromMarquee, applyDeskew,
-  estimateDisplaySize,
+  estimateDisplaySize, runPdfOcr, getOcrWorkerLoaded: () => !!ocrWorker,
 };

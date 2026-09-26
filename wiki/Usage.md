@@ -55,7 +55,10 @@ hits the Network panel for `ffmpeg-core.wasm`.
    outside the region are discarded on Save (page is re-rasterized).
 6. **Deskew** — use the inspector slider (−15°…+15°) and **Apply deskew** to
    straighten tilted scans. Same This page / All pages scope as rotate/crop.
-7. **Save** — ink overlays keep original text where possible; crop, deskew, and
+7. **Extract text** — offline OCR (Tesseract) on the rendered page(s). Uses
+   This page / All pages scope; results open in the inspector and are copied.
+   Useful for scanned / CamScanner-style PDFs with no selectable text.
+8. **Save** — ink overlays keep original text where possible; crop, deskew, and
    redact burn the page to an image so underlying content cannot be recovered.
    Exported as `<name>-signed.pdf`.
 
