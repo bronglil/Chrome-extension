@@ -59,6 +59,8 @@ const state = {
   pageOverlays: {},    // { [pageNum]: konvaJSON }
   pageSizes: {},       // { [pageNum]: {w,h} } in rendered pixels
   pageRotations: {},   // { [pageNum]: 0|90|180|270 } user turns on top of PDF /Rotate
+  pageCrops: {},       // { [pageNum]: { nx, ny, nw, nh } } fractions of deskewed page
+  pageDeskew: {},      // { [pageNum]: degrees } small tilt correction
   acknowledge: false,  // stamp "AK" at the bottom of every page
   ackLayer: null,      // on-screen AK badge (redrawn per page; not serialized)
   pageCanvas: null,    // the rendered pixels of the current page (for occupancy checks)
@@ -134,6 +136,8 @@ async function openPdf(arrayBuffer, name) {
   state.pageOverlays = {};
   state.pageSizes = {};
   state.pageRotations = {};
+  state.pageCrops = {};
+  state.pageDeskew = {};
   const chip = $("#pe-file");
   chip.textContent = state.fileName;
   chip.hidden = false;
@@ -141,6 +145,7 @@ async function openPdf(arrayBuffer, name) {
   $("#pe-save").disabled = false;
   $("#pe-rotate-cw").disabled = false;
   $("#pe-rotate-ccw").disabled = false;
+  syncGeometryUi();
   await renderAllPages();
   updatePager();
 }
@@ -218,22 +223,116 @@ function activatePage(num, { scroll = false } = {}) {
   }
 }
 
+function pageCrop(num) {
+  return state.pageCrops[num] || null;
+}
+function pageDeskew(num) {
+  const d = Number(state.pageDeskew[num]);
+  return Number.isFinite(d) ? d : 0;
+}
+function pageNeedsBurn(num) {
+  // Crop / deskew / redact always re-rasterize. Rotation alone can stay a soft
+  // /Rotate flag unless the page also has ink (handled in the export loop).
+  return !!(pageCrop(num) || pageDeskew(num) || pageHasRedact(num));
+}
+
+function deskewCanvas(src, deg) {
+  if (!deg) return src;
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(rad));
+  const sin = Math.abs(Math.sin(rad));
+  const nw = Math.ceil(src.width * cos + src.height * sin);
+  const nh = Math.ceil(src.width * sin + src.height * cos);
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, nw);
+  out.height = Math.max(1, nh);
+  const ctx = out.getContext("2d", { alpha: false });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.translate(out.width / 2, out.height / 2);
+  ctx.rotate(rad);
+  ctx.drawImage(src, -src.width / 2, -src.height / 2);
+  return out;
+}
+
+function cropCanvas(src, x, y, w, h) {
+  const cw = Math.max(1, Math.round(w));
+  const ch = Math.max(1, Math.round(h));
+  const sx = Math.max(0, Math.min(src.width - 1, Math.round(x)));
+  const sy = Math.max(0, Math.min(src.height - 1, Math.round(y)));
+  const out = document.createElement("canvas");
+  out.width = cw;
+  out.height = ch;
+  const ctx = out.getContext("2d", { alpha: false });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.drawImage(src, sx, sy, cw, ch, 0, 0, cw, ch);
+  return out;
+}
+
+/** Deskew then crop a rendered page canvas. Crop fractions are of the deskewed bitmap. */
+function transformPageCanvas(src, num) {
+  let canvas = src;
+  const skew = pageDeskew(num);
+  if (skew) canvas = deskewCanvas(canvas, skew);
+  const crop = pageCrop(num);
+  if (crop) {
+    const x = crop.nx * canvas.width;
+    const y = crop.ny * canvas.height;
+    const w = Math.max(1, crop.nw * canvas.width);
+    const h = Math.max(1, crop.nh * canvas.height);
+    canvas = cropCanvas(canvas, x, y, w, h);
+  }
+  return canvas;
+}
+
+/** Estimate display size after rotation + deskew + crop (no full raster). */
+function estimateDisplaySize(page, num) {
+  const rotation = totalRotation(page, num);
+  const fit = pageDisplayScale(page, rotation);
+  const vp = page.getViewport({ scale: fit, rotation });
+  let dw = vp.width;
+  let dh = vp.height;
+  const skew = Math.abs(pageDeskew(num));
+  if (skew > 0.05) {
+    const rad = (skew * Math.PI) / 180;
+    const cos = Math.abs(Math.cos(rad));
+    const sin = Math.abs(Math.sin(rad));
+    const nw = dw * cos + dh * sin;
+    const nh = dw * sin + dh * cos;
+    dw = nw;
+    dh = nh;
+  }
+  const crop = pageCrop(num);
+  if (crop) {
+    dw *= crop.nw;
+    dh *= crop.nh;
+  }
+  return {
+    w: Math.max(1, Math.round(dw)),
+    h: Math.max(1, Math.round(dh)),
+    rotation,
+  };
+}
+
 async function mountPage(num, container) {
   const page = await state.pdfDoc.getPage(num);
   const dpr = rasterDpr();
   const rotation = totalRotation(page, num);
   const fit = pageDisplayScale(page, rotation);
   const viewport = page.getViewport({ scale: fit * dpr, rotation });
-  const displayW = Math.max(1, Math.round(viewport.width / dpr));
-  const displayH = Math.max(1, Math.round(viewport.height / dpr));
 
-  const canvas = document.createElement("canvas");
+  let canvas = document.createElement("canvas");
   canvas.width = Math.floor(viewport.width);
   canvas.height = Math.floor(viewport.height);
   const ctx = canvas.getContext("2d", { alpha: false });
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
   await page.render({ canvasContext: ctx, viewport, intent: "display" }).promise;
+  canvas = transformPageCanvas(canvas, num);
+
+  const displayW = Math.max(1, Math.round(canvas.width / dpr));
+  const displayH = Math.max(1, Math.round(canvas.height / dpr));
 
   const prev = state.pageSizes[num];
   if (prev && prev.w && Math.abs(prev.w - displayW) > 2) {
@@ -279,16 +378,14 @@ async function renderAllPages() {
   const dpr = rasterDpr();
   for (let n = 1; n <= state.numPages; n++) {
     const page = await state.pdfDoc.getPage(n);
-    const rotation = totalRotation(page, n);
-    const fit = pageDisplayScale(page, rotation);
-    const vp = page.getViewport({ scale: fit, rotation });
-    const displayW = Math.max(1, Math.round(vp.width));
-    const displayH = Math.max(1, Math.round(vp.height));
+    const est = estimateDisplaySize(page, n);
+    const displayW = est.w;
+    const displayH = est.h;
     const prev = state.pageSizes[n];
     if (prev && prev.w && Math.abs(prev.w - displayW) > 2) {
       scaleSavedOverlay(n, displayW / prev.w);
     }
-    state.pageSizes[n] = { w: displayW, h: displayH, dpr, rotation };
+    state.pageSizes[n] = { w: displayW, h: displayH, dpr, rotation: est.rotation };
 
     const card = document.createElement("section");
     card.className = "pe-page";
@@ -436,6 +533,27 @@ function updatePager() {
   const info = $("#pe-pageinfo");
   if (info) info.textContent = state.numPages ? `${state.pageNum} / ${state.numPages}` : "— / —";
   syncRotateUi();
+  syncGeometryUi();
+}
+
+function syncGeometryUi() {
+  const has = !!state.pdfDoc;
+  const cropBtn = $("#pe-crop-apply");
+  const deskew = $("#pe-deskew");
+  const deskewApply = $("#pe-deskew-apply");
+  const deskewVal = $("#pe-deskew-val");
+  if (cropBtn) cropBtn.disabled = !has || state.tool !== "crop";
+  if (deskew) {
+    deskew.disabled = !has;
+    if (has) {
+      const cur = pageDeskew(state.pageNum);
+      if (document.activeElement !== deskew) deskew.value = String(cur);
+      if (deskewVal) deskewVal.textContent = `${Number(deskew.value) || 0}°`;
+    } else if (deskewVal) {
+      deskewVal.textContent = "0°";
+    }
+  }
+  if (deskewApply) deskewApply.disabled = !has;
 }
 
 function syncRotateUi() {
@@ -486,13 +604,11 @@ function clearPageAnnotations(num) {
 
 async function relayoutPageSlot(num) {
   const page = await state.pdfDoc.getPage(num);
-  const rotation = totalRotation(page, num);
-  const fit = pageDisplayScale(page, rotation);
-  const vp = page.getViewport({ scale: fit, rotation });
-  const displayW = Math.max(1, Math.round(vp.width));
-  const displayH = Math.max(1, Math.round(vp.height));
+  const est = estimateDisplaySize(page, num);
+  const displayW = est.w;
+  const displayH = est.h;
   const dpr = rasterDpr();
-  state.pageSizes[num] = { w: displayW, h: displayH, dpr, rotation };
+  state.pageSizes[num] = { w: displayW, h: displayH, dpr, rotation: est.rotation };
 
   const slot = state.slots[num];
   if (slot) {
@@ -560,6 +676,94 @@ $("#pe-rotate-cw")?.addEventListener("click", () => {
 });
 $("#pe-rotate-ccw")?.addEventListener("click", () => {
   rotatePage(-90).catch((err) => toast(err.message || "Rotate failed"));
+});
+
+async function geometryTargets() {
+  if (rotateScope() === "all") {
+    return Array.from({ length: state.numPages }, (_, i) => i + 1);
+  }
+  return [state.pageNum];
+}
+
+async function applyCropFromMarquee() {
+  if (!state.pdfDoc) return toast("Open a PDF first");
+  const marquee = state.overlayLayer?.findOne(".crop-marquee-final")
+    || state.overlayLayer?.findOne(".crop-marquee");
+  if (!marquee) return toast("Drag a crop region with the Crop tool first");
+  const size = state.pageSizes[state.pageNum];
+  if (!size?.w || !size?.h) return toast("Page not ready");
+
+  let x = marquee.x();
+  let y = marquee.y();
+  let w = marquee.width();
+  let h = marquee.height();
+  if (w < 0) { x += w; w = -w; }
+  if (h < 0) { y += h; h = -h; }
+  const box = U.clampRect(
+    { x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h) },
+    size.w,
+    size.h,
+  );
+  if (box.width < 8 || box.height < 8) return toast("Crop region too small");
+
+  // Compose with any existing crop (marquee is on the current visual).
+  const prev = pageCrop(state.pageNum) || { nx: 0, ny: 0, nw: 1, nh: 1 };
+  const local = {
+    nx: box.x / size.w,
+    ny: box.y / size.h,
+    nw: box.width / size.w,
+    nh: box.height / size.h,
+  };
+  const abs = {
+    nx: prev.nx + local.nx * prev.nw,
+    ny: prev.ny + local.ny * prev.nh,
+    nw: local.nw * prev.nw,
+    nh: local.nh * prev.nh,
+  };
+
+  const targets = await geometryTargets();
+  for (const num of targets) {
+    state.pageCrops[num] = { ...abs };
+    clearPageAnnotations(num);
+    await relayoutPageSlot(num);
+  }
+  await syncLivePages();
+  if (!state.views[state.pageNum]) await ensureMounted(state.pageNum);
+  activatePage(state.pageNum);
+  syncGeometryUi();
+  toast(targets.length > 1 ? `Cropped ${targets.length} pages` : "Page cropped");
+}
+
+async function applyDeskew() {
+  if (!state.pdfDoc) return toast("Open a PDF first");
+  const deg = Number($("#pe-deskew")?.value) || 0;
+  const targets = await geometryTargets();
+  for (const num of targets) {
+    if (Math.abs(deg) < 0.05) delete state.pageDeskew[num];
+    else state.pageDeskew[num] = deg;
+    clearPageAnnotations(num);
+    await relayoutPageSlot(num);
+  }
+  await syncLivePages();
+  if (!state.views[state.pageNum]) await ensureMounted(state.pageNum);
+  activatePage(state.pageNum);
+  syncGeometryUi();
+  toast(
+    Math.abs(deg) < 0.05
+      ? (targets.length > 1 ? "Deskew cleared on all pages" : "Deskew cleared")
+      : (targets.length > 1 ? `Deskew ${deg}° on ${targets.length} pages` : `Deskew ${deg}° applied`),
+  );
+}
+
+$("#pe-crop-apply")?.addEventListener("click", () => {
+  applyCropFromMarquee().catch((err) => toast(err.message || "Crop failed"));
+});
+$("#pe-deskew")?.addEventListener("input", () => {
+  const v = $("#pe-deskew-val");
+  if (v) v.textContent = `${Number($("#pe-deskew").value) || 0}°`;
+});
+$("#pe-deskew-apply")?.addEventListener("click", () => {
+  applyDeskew().catch((err) => toast(err.message || "Deskew failed"));
 });
 
 function pagesToKeepLive() {
@@ -710,6 +914,7 @@ document.querySelectorAll(".rail__tool[data-tool]").forEach((btn) => {
     state.tool = next;
     if (state.transformer && next !== "select") state.transformer.nodes([]);
     setToolCursors();
+    syncGeometryUi();
     if (state.tool === "sign") {
       if (!state.stage) { toast("Open a PDF first"); return; }
       openSigModal();
@@ -772,10 +977,11 @@ function bindStage(view) {
     }
     if (state.tool === "pen" || state.tool === "highlight") startDraw(e);
     if (state.tool === "redact") startRedact(e);
+    if (state.tool === "crop") startCrop(e);
   });
   stage.on("mousemove.pdfed touchmove.pdfed", (e) => {
     if (state.drawing) {
-      if (state.drawing.tool === "redact") extendRedact(e);
+      if (state.drawing.tool === "redact" || state.drawing.tool === "crop") extendRedact(e);
       else extendDraw(e);
     }
   });
@@ -859,7 +1065,7 @@ function clientFromStage(x, y, stage = state.stage) {
 function onDocDrawMove(e) {
   if (e.cancelable && e.type === "touchmove") e.preventDefault();
   if (!state.drawing) return;
-  if (state.drawing.tool === "redact") extendRedact(e);
+  if (state.drawing.tool === "redact" || state.drawing.tool === "crop") extendRedact(e);
   else extendDraw(e);
 }
 function onDocDrawUp() {
@@ -878,6 +1084,22 @@ function endDraw() {
         node.dash([]);
         node.name("redact");
         try { node.draggable(true); } catch (_) { /* ignore */ }
+      }
+    } else if (state.drawing.tool === "crop") {
+      const node = state.drawing.node;
+      if (node.width() < 8 || node.height() < 8) node.destroy();
+      else {
+        // Keep only one pending crop marquee.
+        state.overlayLayer.find(".crop-marquee, .crop-marquee-final").forEach((n) => {
+          if (n !== node) n.destroy();
+        });
+        node.name("crop-marquee-final");
+        node.dash([6, 4]);
+        node.fill("rgba(59,130,246,0.12)");
+        node.stroke("#2563eb");
+        try { node.draggable(false); } catch (_) { /* ignore */ }
+        syncGeometryUi();
+        toast("Crop region set — click Apply crop");
       }
     } else {
       try { state.drawing.node.draggable(true); } catch (_) { /* ignore */ }
@@ -940,9 +1162,28 @@ function startRedact(evt) {
   window.addEventListener("touchend", onDocDrawUp, true);
 }
 
+function startCrop(evt) {
+  const p = pointer(evt);
+  if (!p) return;
+  const node = new Konva.Rect({
+    x: p.x, y: p.y, width: 0, height: 0,
+    fill: "rgba(59,130,246,0.12)",
+    stroke: "#2563eb",
+    strokeWidth: 1.5,
+    dash: [6, 4],
+    name: "crop-marquee",
+  });
+  state.overlayLayer.add(node);
+  state.drawing = { node, start: p, tool: "crop" };
+  window.addEventListener("mousemove", onDocDrawMove, true);
+  window.addEventListener("mouseup", onDocDrawUp, true);
+  window.addEventListener("touchmove", onDocDrawMove, { capture: true, passive: false });
+  window.addEventListener("touchend", onDocDrawUp, true);
+}
+
 function extendRedact(evt) {
   const p = pointer(evt);
-  if (!p || !state.drawing || state.drawing.tool !== "redact") return;
+  if (!p || !state.drawing || (state.drawing.tool !== "redact" && state.drawing.tool !== "crop")) return;
   const { node, start } = state.drawing;
   node.x(Math.min(start.x, p.x));
   node.y(Math.min(start.y, p.y));
@@ -1317,12 +1558,12 @@ async function exportPdf() {
     const pdf = await PDFDocument.load(state.pdfBytes);
     const pages = pdf.getPages();
 
-    // Apply user page rotations. Pages that also have ink are handled below via
-    // a visual flatten (rotation baked into the bitmap) so strokes stay aligned.
+    // Soft /Rotate for pages that are only rotated (no ink / crop / deskew / redact).
     for (let i = 0; i < pages.length; i++) {
       const num = i + 1;
       const extra = userRotation(num);
       if (!extra) continue;
+      if (pageCrop(num) || pageDeskew(num) || pageHasRedact(num)) continue;
       const hasInk = (() => {
         try {
           const raw = state.pageOverlays[num];
@@ -1337,19 +1578,30 @@ async function exportPdf() {
       page.setRotation(degrees((cur + extra) % 360));
     }
 
-    const annotated = Object.keys(state.pageOverlays);
+    const toEmbed = new Set();
+    Object.keys(state.pageOverlays).forEach((k) => toEmbed.add(+k));
+    for (let n = 1; n <= state.numPages; n++) {
+      if (pageCrop(n) || pageDeskew(n) || pageHasRedact(n)) toEmbed.add(n);
+      // Rotation + ink is covered via pageOverlays keys.
+    }
+    const annotated = [...toEmbed].sort((a, b) => a - b);
     for (let i = 0; i < annotated.length; i++) {
-      const num = +annotated[i];
-      progress("Embedding page " + num + "…", 0.1 + 0.8 * (i / annotated.length));
+      const num = annotated[i];
+      progress("Embedding page " + num + "…", 0.1 + 0.8 * (i / Math.max(1, annotated.length)));
       const extra = userRotation(num);
-      const mustBurn = extra || pageHasRedact(num);
+      const mustBurn = extra || pageNeedsBurn(num);
 
       if (mustBurn) {
         // Bake page + overlays into one image, then REPLACE the page so underlying
-        // text/content streams cannot be recovered (true redaction).
+        // text/content streams cannot be recovered (true redaction / crop / deskew).
         const flat = await flattenPageVisual(num);
         if (!flat) continue;
-        await replacePageWithImage(pdf, num - 1, flat, extra ? degrees(0) : null);
+        await replacePageWithImage(
+          pdf,
+          num - 1,
+          flat,
+          (extra || pageCrop(num) || pageDeskew(num)) ? degrees(0) : null,
+        );
         continue;
       }
 
@@ -1442,14 +1694,14 @@ async function overlayPng(num) {
   return dataUrl;
 }
 
-/** Full visual page (rotated PDF raster + overlays) for export after rotate. */
+/** Full visual page (rotated PDF raster + deskew/crop + overlays) for burn export. */
 async function flattenPageVisual(num) {
   const page = await state.pdfDoc.getPage(num);
   const dpr = Math.max(2, rasterDpr());
   const rotation = totalRotation(page, num);
   const fit = pageDisplayScale(page, rotation);
   const viewport = page.getViewport({ scale: fit * dpr, rotation });
-  const canvas = document.createElement("canvas");
+  let canvas = document.createElement("canvas");
   canvas.width = Math.floor(viewport.width);
   canvas.height = Math.floor(viewport.height);
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -1457,12 +1709,15 @@ async function flattenPageVisual(num) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   await page.render({ canvasContext: ctx, viewport, intent: "display" }).promise;
 
+  // Overlays are authored in the *current* visual space (after deskew/crop).
+  canvas = transformPageCanvas(canvas, num);
+
   const overlayUrl = await overlayPng(num);
   if (overlayUrl) {
     await new Promise((resolve, reject) => {
       const im = new Image();
       im.onload = () => {
-        ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
+        canvas.getContext("2d").drawImage(im, 0, 0, canvas.width, canvas.height);
         resolve();
       };
       im.onerror = reject;
@@ -1531,4 +1786,6 @@ window.__pdfEditor = {
   state, openPdf, exportPdf, chooseAckSide, editText, addTextAt, goToPage,
   pointer, clientFromStage, rotatePage, userRotation, totalRotation, rotateScope,
   pageHasRedact, flattenPageVisual, replacePageWithImage,
+  pageCrop, pageDeskew, pageNeedsBurn, applyCropFromMarquee, applyDeskew,
+  estimateDisplaySize,
 };
