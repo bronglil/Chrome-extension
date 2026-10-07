@@ -27,6 +27,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 button { font-family: inherit; }
+/* UA styles don't hide <svg hidden>; toggle icons rely on it. */
+svg[hidden] { display: none !important; }
 
 .studio {
   height: 100%;
@@ -450,6 +452,10 @@ body.is-live .pip.pip--bl { left: 14px; right: auto; }
 body.is-live .pip.pip--br { right: 14px; left: auto; }
 body.is-live .pip.pip--bc { left: 50%; right: auto; transform: translateX(-50%); }
 body.is-live .footnote { display: none; }
+/* Toggle buttons already show state; chips just crowd the small live window. */
+body.is-live .chips { display: none; }
+body.is-live .actions--live { justify-content: center; }
+body.is-live #btn-share-live { flex: 1 1 auto; }
 body.is-live .brand__copy strong::after {
   content: "";
 }

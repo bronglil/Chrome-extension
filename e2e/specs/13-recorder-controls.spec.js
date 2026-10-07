@@ -211,10 +211,10 @@ test.describe("Recorder controls (exhaustive)", () => {
     test.setTimeout(60_000);
     const rec = await openStudio(context, extensionId);
     await goLive(rec);
-    await expect(rec.locator("#share-label-live")).toHaveText("Share");
+    await expect(rec.locator("#share-label-live")).toHaveText("Share screen");
     await rec.click("#btn-share-live");
     await expect(rec.locator("#screen-preview")).toHaveClass(/is-live/, { timeout: 20_000 });
-    await expect(rec.locator("#share-label-live")).toHaveText("Change");
+    await expect(rec.locator("#share-label-live")).toHaveText("Switch screen");
     const sharing = await rec.evaluate(() => window.__recorder.state.sharing);
     expect(sharing).toBe(true);
   });
@@ -524,6 +524,40 @@ test.describe("Popup recording prefs", () => {
     // Must be the re-encoded window — not the untouched source (~fullDur).
     expect(trimmedDur).toBeLessThan(want * 1.6 + 0.4);
     expect(trimmedDur).toBeLessThan(fullDur * 0.7);
+  });
+
+  test("trim review: a light trim (cut only the first few %) still downloads", async ({ context, extensionId }) => {
+    test.setTimeout(120_000);
+    const rec = await openStudio(context, extensionId, "cam=0&mic=0&audio=0&saveAs=0&fake=1&trim=1");
+    await goLive(rec);
+    await rec.waitForTimeout(4500);
+    await rec.click("#btn-stop");
+    await expect(rec.locator("#trim-panel")).toBeVisible({ timeout: 15_000 });
+    await rec.waitForFunction(() => {
+      const R = window.__recorder;
+      const dur = R?.state?.trimDuration || document.getElementById("trim-video")?.duration;
+      return R?.state?.trimSlidersReady && Number.isFinite(dur) && dur > 1;
+    }, null, { timeout: 15_000 });
+
+    // Keep ~95% — previously rejected as "nearly full" / "did not shorten".
+    const range = await rec.evaluate(() => {
+      document.getElementById("trim-start").value = "50";
+      document.getElementById("trim-end").value = "1000";
+      document.getElementById("trim-start").dispatchEvent(new Event("input", { bubbles: true }));
+      document.getElementById("trim-end").dispatchEvent(new Event("input", { bubbles: true }));
+      window.__recorder.state.trimSlidersReady = true;
+      return window.__recorder.getTrimRange();
+    });
+    expect(range.start).toBeGreaterThan(0.1);
+    expect(range.end - range.start).toBeGreaterThan(range.duration * 0.9);
+
+    const [download] = await Promise.all([
+      rec.waitForEvent("download", { timeout: 90_000 }),
+      rec.click("#trim-save"),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/\.webm$/i);
+    const file = await download.path();
+    expect(require("node:fs").statSync(file).size).toBeGreaterThan(0);
   });
 
   test("popup persists Export as MP4 preference", async ({ context, extensionId }) => {
