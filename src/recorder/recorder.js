@@ -114,12 +114,18 @@ function flags() {
 }
 
 function syncShareButtons() {
-  const label = state.sharing ? "Change screen" : "Share screen";
-  const liveLabel = state.sharing ? "Change" : "Share";
+  const label = state.sharing ? "Switch screen" : "Share screen";
+  const liveLabel = state.sharing ? "Switch screen" : "Share screen";
   const shareLabel = $("#share-label");
   const shareLabelLive = $("#share-label-live");
   if (shareLabel) shareLabel.textContent = label;
   if (shareLabelLive) shareLabelLive.textContent = liveLabel;
+  const liveBtn = $("#btn-share-live");
+  if (liveBtn) {
+    liveBtn.title = state.sharing
+      ? "Pick a different screen, window, or tab"
+      : "Add a screen, window, or tab to the recording";
+  }
   $("#btn-unshare").hidden = !state.sharing || !!state.startedAt;
   $("#screen-empty").hidden = state.sharing;
   $("#screen-preview").classList.toggle("is-live", state.sharing);
@@ -227,24 +233,42 @@ function cancelSharePicker() {
   }
 }
 
-function pickDesktop(wantAudio) {
+function currentTab() {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.getCurrent((tab) => {
+        // desktopCapture needs tab.url; getCurrent omits it for our own page.
+        resolve(tab ? { ...tab, url: tab.url || location.href } : null);
+      });
+    } catch (_) { resolve(null); }
+  });
+}
+
+async function pickDesktop(wantAudio) {
+  if (!chrome.desktopCapture?.chooseDesktopMedia) {
+    throw new Error("Screen capture is not available in this window.");
+  }
+  // Anchor the picker to this tab so it opens on top of the studio window
+  // instead of floating behind other windows.
+  const tab = await currentTab();
   return new Promise((resolve, reject) => {
-    if (!chrome.desktopCapture?.chooseDesktopMedia) {
-      return reject(new Error("Screen capture is not available in this window."));
-    }
     const sources = ["screen", "window", "tab"];
     if (wantAudio) sources.push("audio");
     state.picking = true;
-    const reqId = chrome.desktopCapture.chooseDesktopMedia(sources, (id) => {
+    const onPick = (id) => {
       if (state.pickerReqId === reqId) state.pickerReqId = null;
       state.picking = false;
-      if (state.finalizing || !state.startedAt) {
+      // Sharing before Start is allowed — only bail if the session is ending.
+      if (state.finalizing) {
         reject(new Error("Capture cancelled."));
         return;
       }
       if (!id) reject(new Error("Capture cancelled."));
       else resolve(id);
-    });
+    };
+    const reqId = tab
+      ? chrome.desktopCapture.chooseDesktopMedia(sources, tab, onPick)
+      : chrome.desktopCapture.chooseDesktopMedia(sources, onPick);
     state.pickerReqId = reqId;
   });
 }
@@ -282,13 +306,13 @@ async function setWin(mode) {
   try { win = await chrome.windows.getCurrent(); } catch (_) { /* ignore */ }
   if (!win?.id) return;
   try {
-    if (mode === "picker") {
-      await chrome.windows.update(win.id, { state: "minimized" });
-      return;
-    }
-    const size = mode === "controls"
-      ? { width: 360, height: 280 }
-      : { width: 420, height: 640 };
+    // "picker": never minimize — Chrome's picker belongs to this window and
+    // would disappear with it. Grow it instead so the dialog fits on top.
+    const size = mode === "picker"
+      ? { width: 760, height: 640 }
+      : mode === "controls"
+        ? { width: 420, height: 400 }
+        : { width: 420, height: 640 };
     await chrome.windows.update(win.id, {
       state: "normal",
       focused: mode !== "controls",
@@ -308,8 +332,7 @@ async function getDisplayStream(wantAudio) {
     });
   }
 
-  // Hide this window so Chrome's picker is not dominated by it, and so
-  // "Entire screen" does not start on our own UI.
+  // Bring the studio forward and large enough to host Chrome's picker.
   await setWin("picker");
   try {
     const streamId = await pickDesktop(wantAudio);

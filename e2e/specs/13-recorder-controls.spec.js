@@ -211,10 +211,10 @@ test.describe("Recorder controls (exhaustive)", () => {
     test.setTimeout(60_000);
     const rec = await openStudio(context, extensionId);
     await goLive(rec);
-    await expect(rec.locator("#share-label-live")).toHaveText("Share");
+    await expect(rec.locator("#share-label-live")).toHaveText("Share screen");
     await rec.click("#btn-share-live");
     await expect(rec.locator("#screen-preview")).toHaveClass(/is-live/, { timeout: 20_000 });
-    await expect(rec.locator("#share-label-live")).toHaveText("Change");
+    await expect(rec.locator("#share-label-live")).toHaveText("Switch screen");
     const sharing = await rec.evaluate(() => window.__recorder.state.sharing);
     expect(sharing).toBe(true);
   });

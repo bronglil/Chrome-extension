@@ -28,7 +28,7 @@
         <div class="preview__empty" id="screen-empty">
           <div class="preview__orb" aria-hidden="true"></div>
           <h1 class="preview__title">Capture anything</h1>
-          <p class="preview__sub">3-second countdown, then you’re live. Share your screen anytime. Pause, mute, or discard like Loom.</p>
+          <p class="preview__sub">Share a screen, window, or tab to preview it here — or just start. You can share or switch screens any time while recording.</p>
         </div>
         <section class="pip" id="person-panel" hidden>
           <video id="cam-preview" autoplay muted playsinline></video>
@@ -77,7 +77,7 @@
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
           <span id="share-label">Share screen</span>
         </button>
-        <button class="btn btn--ghost" id="btn-unshare" type="button" hidden>Remove screen</button>
+        <button class="btn btn--ghost btn--compact" id="btn-unshare" type="button" title="Stop sharing this screen" hidden>Remove</button>
         <button class="btn btn--primary" id="btn-start" type="button">
           <span class="btn__rec"></span>
           Start recording
@@ -110,7 +110,8 @@
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7" stroke-dasharray="3 3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
         </button>
         <button class="btn btn--ghost btn--compact" id="btn-share-live" type="button">
-          <span id="share-label-live">Share</span>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+          <span id="share-label-live">Share screen</span>
         </button>
         <button class="btn btn--ghost btn--compact" id="btn-discard" type="button" title="Discard recording">Discard</button>
         <button class="btn btn--stop" id="btn-stop" type="button">
