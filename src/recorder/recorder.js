@@ -1548,9 +1548,9 @@ function trimWebmBlob(blob, startSec, endSec) {
       const start = Math.max(0, Math.min(startSec, Math.max(0, dur - 0.25)));
       const end = Math.min(dur, Math.max(start + 0.25, endSec));
       const windowSec = end - start;
-      if (!(windowSec > 0.2) || windowSec >= dur * 0.92) {
+      if (!(windowSec > 0.2)) {
         cleanup();
-        return reject(new Error("Trim range too small or nearly full"));
+        return reject(new Error("Trim range too small"));
       }
 
       if (typeof video.captureStream !== "function") {
@@ -1646,11 +1646,10 @@ function trimWebmBlob(blob, startSec, endSec) {
 
       const out = await stopped;
       cleanup();
+      // `out` is always a fresh re-encode of [start, end], never the source.
+      // Don't compare byte sizes: the re-encode runs at the same bitrate as
+      // the original, so a light trim can legitimately come out as large.
       if (!out.size) return reject(new Error("Trim produced an empty file"));
-      // Guard against accidentally shipping a near-full re-encode.
-      if (blob.size > 2500 && out.size >= blob.size * 0.92) {
-        return reject(new Error("Trim did not shorten the recording"));
-      }
       resolve({ blob: out, duration: windowSec });
     } catch (err) {
       cleanup();
@@ -1734,6 +1733,9 @@ function fixWebmDuration(video) {
 }
 
 function openTrimReview(blob) {
+  if (state.trimUrl) {
+    try { URL.revokeObjectURL(state.trimUrl); } catch (_) { /* ignore */ }
+  }
   state.trimBlob = blob;
   state.trimUrl = URL.createObjectURL(blob);
   state.trimDuration = 0;
